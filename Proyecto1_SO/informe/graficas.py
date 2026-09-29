@@ -6,15 +6,17 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter
 
 BASE = os.path.dirname(os.path.abspath(__file__))
-RES = os.path.join(BASE, "..", "resultados")
+RES = os.path.join(BASE, "..", "resultados_windows")
 OUT = os.path.join(BASE, "img")
+plt.rcParams["font.family"] = "serif"
+plt.rcParams["font.serif"] = ["Times New Roman", "Liberation Serif"]
 os.makedirs(OUT, exist_ok=True)
 
 def leer(nombre):
     with open(os.path.join(RES, nombre)) as f:
         return [{k: float(v) for k, v in r.items()} for r in csv.DictReader(f)]
 
-multi, dos, uno = leer("resultados_multicore.csv"), leer("resultados_2nucleos.csv"), leer("resultados_1nucleo.csv")
+multi, dos, uno = leer("resultados.csv"), leer("r_2nucleos.csv"), leer("r_1nucleo.csv")
 col = lambda d, k: [r[k] for r in d]
 miles = FuncFormatter(lambda x, _: f"{x:,.0f}")
 AZUL, NARANJA, VERDE, GRIS = "#2F5496", "#E07B39", "#3A9D5D", "#888888"
@@ -64,20 +66,20 @@ ax.loglog(Nall, col(multi, "ms_paso1"), "o-", color=AZUL, label="Paso 1 – secu
 ax.loglog(Nall, col(multi, "ms_paso2"), "s-", color=NARANJA, label="Paso 2 – dividido (secuencial)")
 ax.loglog(Nall, col(multi, "ms_paso3"), "^-", color=VERDE, label="Paso 3 – dividido con 2 hilos")
 ax.set_xlabel("Número de elementos (N) – escala log"); ax.set_ylabel("Tiempo (ms) – escala log")
-ax.set_title("Tiempo de ejecución de las tres versiones (CPU de 4 núcleos)")
+ax.set_title("Tiempo de ejecución de las tres versiones (8 procesadores lógicos)")
 ax.grid(alpha=.3, which="both"); ax.legend()
 guardar(fig, "tiempos_tres_versiones.png")
 
 # --- Speedup de hilos (Paso2/Paso3) segun nucleos ---
 fig, ax = plt.subplots(figsize=(7.5, 4.5))
-ax.semilogx(Nall, col(uno, "speedup_p2_vs_p3"), "o-", color="#C0392B", label="1 núcleo (single-core)")
-ax.semilogx(Nall, col(dos, "speedup_p2_vs_p3"), "s-", color=NARANJA, label="2 núcleos (dual-core)")
-ax.semilogx(Nall, col(multi, "speedup_p2_vs_p3"), "^-", color=VERDE, label="4 núcleos")
+ax.semilogx(Nall, col(uno, "speedup_p2_vs_p3"), "o-", color="#C0392B", label="1 procesador lógico (afinidad 1)")
+ax.semilogx(Nall, col(dos, "speedup_p2_vs_p3"), "s-", color=NARANJA, label="2 procesadores lógicos (afinidad 3)")
+ax.semilogx(Nall, col(multi, "speedup_p2_vs_p3"), "^-", color=VERDE, label="8 procesadores lógicos (sin límite)")
 ax.axhline(1, color=GRIS, ls="--", lw=1); ax.axhline(2, color=GRIS, ls=":", lw=1)
 ax.text(Nall[0], 1.04, "igual que secuencial", fontsize=8, color=GRIS)
 ax.text(Nall[0], 2.04, "máximo teórico con 2 hilos", fontsize=8, color=GRIS)
 ax.set_xlabel("Número de elementos (N) – escala log"); ax.set_ylabel("Speedup = tiempo Paso 2 / tiempo Paso 3")
-ax.set_title("Paso 3 – Aceleración obtenida con hilos según núcleos disponibles")
-ax.set_ylim(0, 3.4); ax.grid(alpha=.3, which="both"); ax.legend(loc="upper left", ncol=3, fontsize=8)
+ax.set_title("Paso 3 – Aceleración con hilos según procesadores disponibles")
+ax.set_ylim(0, 3.4); ax.grid(alpha=.3, which="both"); ax.legend(loc="upper left", fontsize=8)
 guardar(fig, "speedup_nucleos.png")
 print("Graficas generadas en", OUT)

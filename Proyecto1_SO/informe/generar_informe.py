@@ -1,60 +1,63 @@
 """
-Construye Informe_Proyecto1_SO.docx usando la portada del laboratorio anterior.
+Construye Informe_Proyecto1_SO.docx con la portada del laboratorio anterior,
+las capturas tomadas en Windows (carpeta capturas/) y los CSV de
+../resultados_windows.
 
-Uso:  python3 generar_informe.py <plantilla_con_portada.docx>
+Uso:  python3 generar_informe.py <plantilla_con_portada.docx> [paginas.json]
 
-Toma la portada de la plantilla, le cambia el titulo a "Proyecto #1", borra el
-resto del contenido y escribe el informe con los resultados de ../resultados.
+Formato: Times New Roman 12, interlineado 1.5, titulos en negrita 14, sin pie
+de pagina, indice automatico de Word y referencias en formato APA.
+El segundo argumento (opcional) trae los numeros de pagina de cada titulo
+para rellenar el indice; se obtiene con paginas_indice.py.
 """
-import csv, os, re, sys, copy
+import csv, json, os, re, sys
 from docx import Document
 from docx.shared import Pt, RGBColor, Cm
-from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK, WD_TAB_ALIGNMENT, WD_TAB_LEADER
 from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 
 BASE = os.path.dirname(os.path.abspath(__file__))
-RAIZ = os.path.join(BASE, "..")
-RES = os.path.join(RAIZ, "resultados")
-SRC = os.path.join(RAIZ, "src")
+RES = os.path.join(BASE, "..", "resultados_windows")
+CAP = os.path.join(BASE, "capturas")
 IMG = os.path.join(BASE, "img")
 SALIDA = os.path.join(BASE, "Informe_Proyecto1_SO.docx")
 
-AZUL_OSCURO = "1F3864"
+FUENTE = "Times New Roman"
 NEGRO = RGBColor(0, 0, 0)
+ANCHO_TEXTO = 15.5  # cm disponibles entre margenes
+
+PAGINAS = {}
+if len(sys.argv) > 2 and os.path.exists(sys.argv[2]):
+    PAGINAS = json.load(open(sys.argv[2], encoding="utf-8"))
 
 # ----------------------------------------------------------------------------
-# Datos
+# Datos medidos en la computadora del estudiante
 # ----------------------------------------------------------------------------
 def leer_csv(nombre):
     with open(os.path.join(RES, nombre)) as f:
         return {int(float(r["N"])): {k: float(v) for k, v in r.items()} for r in csv.DictReader(f)}
 
-M4, M2, M1 = leer_csv("resultados_multicore.csv"), leer_csv("resultados_2nucleos.csv"), leer_csv("resultados_1nucleo.csv")
-TAMANOS = sorted(M4)
+M8, M2, M1 = leer_csv("resultados.csv"), leer_csv("r_2nucleos.csv"), leer_csv("r_1nucleo.csv")
+TAMANOS = sorted(M8)
 
-def txt(nombre):
-    with open(os.path.join(RES, nombre), encoding="utf-8") as f:
-        return f.read().rstrip("\n")
-
-def fuente(nombre):
-    with open(os.path.join(SRC, nombre), encoding="utf-8") as f:
-        return f.read().rstrip("\n")
-
-def f_ent(x):
+def ent(x):
     return f"{int(round(x)):,}"
 
-def f_ms(x):
+def ms(x):
     return f"{x:,.3f}"
 
+def fuente_java(nombre):
+    with open(os.path.join(RES, nombre), encoding="utf-8") as f:
+        return f.read().strip("\n")
+
 # ----------------------------------------------------------------------------
-# Portada
+# Portada: se conserva y solo se cambia el titulo
 # ----------------------------------------------------------------------------
 doc = Document(sys.argv[1])
 body = doc.element.body
 
-# 1) Cambiar el titulo del cuadro azul (esta dos veces: version moderna y VML de respaldo)
 for t in body.iter(qn("w:t")):
     if t.text == "Laboratorio ":
         t.text = "Proyecto "
@@ -63,33 +66,139 @@ for t in body.iter(qn("w:t")):
     elif t.text == "Semana: ":
         t.text = "Programación concurrente"
 for p in body.iter(qn("w:p")):
-    # el numero de semana va en un run aparte justo despues de "Semana:"
-    ts = [t for t in p.iter(qn("w:t"))]
+    ts = list(p.iter(qn("w:t")))
     for i, t in enumerate(ts):
         if t.text == "Programación concurrente" and i + 1 < len(ts) and ts[i + 1].text.strip().isdigit():
             ts[i + 1].text = ""
 
-# 2) Borrar todo lo que viene despues de la portada (desde "Parte 1 ...")
 hijos = list(body)
-corte = None
-for i, el in enumerate(hijos):
-    if el.tag == qn("w:p") and "".join(t.text or "" for t in el.iter(qn("w:t"))).startswith("Parte 1"):
-        corte = i
-        break
-assert corte is not None, "No se encontro el inicio del contenido del laboratorio"
+corte = next(i for i, el in enumerate(hijos) if el.tag == qn("w:p")
+             and "".join(t.text or "" for t in el.iter(qn("w:t"))).startswith("Parte 1"))
 for el in hijos[corte:]:
     if el.tag != qn("w:sectPr"):
         body.remove(el)
 
-# 3) Quitar imagenes del laboratorio viejo que ya no se usan (para no inflar el archivo)
 usados = set(re.findall(r'r:(?:embed|id)="([^"]+)"', body.xml))
 for rid, rel in list(doc.part.rels.items()):
     if "image" in rel.reltype and rid not in usados:
         doc.part.drop_rel(rid)
 
+# Estilos de titulo: Times New Roman 14 negrita, negro (los usa el indice)
+for nombre in ("Heading 1", "Heading 2"):
+    st = doc.styles[nombre]
+    rpr = st.element.get_or_add_rPr()
+    for viejo in rpr.findall(qn("w:rFonts")):
+        rpr.remove(viejo)
+    rf = OxmlElement("w:rFonts")
+    for a in ("w:ascii", "w:hAnsi", "w:cs", "w:eastAsia"):
+        rf.set(qn(a), FUENTE)
+    rpr.insert(0, rf)
+    st.font.size = Pt(14)
+    st.font.bold = True
+    st.font.italic = False
+    st.font.color.rgb = NEGRO
+
 # ----------------------------------------------------------------------------
 # Utilidades de formato
 # ----------------------------------------------------------------------------
+def fmt(run, size=12, bold=False, italic=False, font=FUENTE):
+    run.font.name = font
+    rpr = run._element.get_or_add_rPr()
+    rf = rpr.find(qn("w:rFonts"))
+    for a in ("w:hAnsi", "w:cs", "w:eastAsia"):
+        rf.set(qn(a), font)
+    run.font.size = Pt(size)
+    run.bold = bold
+    run.italic = italic
+    run.font.color.rgb = NEGRO
+    return run
+
+def espaciado(p, interlineado=1.5, antes=0, despues=6):
+    pf = p.paragraph_format
+    pf.line_spacing = interlineado
+    pf.space_before = Pt(antes)
+    pf.space_after = Pt(despues)
+
+def salto_pagina():
+    p = doc.add_paragraph()
+    p.add_run().add_break(WD_BREAK.PAGE)
+
+TITULOS = []  # (nivel, texto) en orden, para el indice
+
+def titulo(texto, nivel=1, nueva_pagina=False):
+    p = doc.add_paragraph(style="Heading %d" % nivel)
+    espaciado(p, antes=12 if nivel == 1 else 6, despues=6)
+    p.paragraph_format.keep_with_next = True
+    p.paragraph_format.page_break_before = nueva_pagina
+    fmt(p.add_run(texto), size=14, bold=True)
+    TITULOS.append((nivel, texto))
+    return p
+
+def par(texto, align=WD_ALIGN_PARAGRAPH.JUSTIFY):
+    """Parrafo normal; **texto** va en negrita y `texto` en Courier New."""
+    p = doc.add_paragraph()
+    p.alignment = align
+    espaciado(p)
+    for trozo in re.split(r"(\*\*[^*]+\*\*|`[^`]+`)", texto):
+        if not trozo:
+            continue
+        if trozo.startswith("**"):
+            fmt(p.add_run(trozo[2:-2]), bold=True)
+        elif trozo.startswith("`"):
+            fmt(p.add_run(trozo[1:-1]), size=11, font="Courier New")
+        else:
+            fmt(p.add_run(trozo))
+    return p
+
+N_FIG = [0]
+N_TAB = [0]
+
+def leyenda_figura(texto):
+    N_FIG[0] += 1
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    espaciado(p, interlineado=1.0, antes=4, despues=12)
+    fmt(p.add_run(f"Figura {N_FIG[0]}. "), bold=True)
+    fmt(p.add_run(texto), italic=True)
+
+def figura(ruta, texto, ancho=ANCHO_TEXTO):
+    from PIL import Image
+    w_px = Image.open(ruta).size[0]
+    ancho = min(ancho, w_px / 96 * 2.54 * 1.25)  # no agrandar capturas pequenas de mas
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    espaciado(p, interlineado=1.0, antes=6, despues=0)
+    p.paragraph_format.keep_with_next = True
+    p.add_run().add_picture(ruta, width=Cm(ancho))
+    leyenda_figura(texto)
+
+def captura(nombre, texto, ancho=ANCHO_TEXTO):
+    figura(os.path.join(CAP, nombre), texto, ancho)
+
+def grafica(nombre, texto):
+    figura(os.path.join(IMG, nombre), texto, 15)
+
+def espacio_para_captura(nombre, texto):
+    """Recuadro para pegar una captura que no llego como archivo."""
+    t = doc.add_table(rows=1, cols=1)
+    t.style = "Table Grid"
+    t.alignment = WD_TABLE_ALIGNMENT.CENTER
+    c = t.cell(0, 0)
+    c.width = Cm(14)
+    p = c.paragraphs[0]
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    espaciado(p, interlineado=1.0, antes=40, despues=40)
+    fmt(p.add_run(f"[Pegar aquí la captura {nombre}]"), italic=True)
+    leyenda_figura(texto)
+
+def leyenda_tabla(texto):
+    N_TAB[0] += 1
+    p = doc.add_paragraph()
+    espaciado(p, interlineado=1.0, antes=6, despues=4)
+    p.paragraph_format.keep_with_next = True
+    fmt(p.add_run(f"Tabla {N_TAB[0]}. "), bold=True)
+    fmt(p.add_run(texto), italic=True)
+
 def sombrear(celda, color):
     tcPr = celda._tc.get_or_add_tcPr()
     shd = OxmlElement("w:shd")
@@ -98,638 +207,490 @@ def sombrear(celda, color):
     shd.set(qn("w:fill"), color)
     tcPr.append(shd)
 
-def margenes_celda(celda, cm=0.25):
-    tcPr = celda._tc.get_or_add_tcPr()
-    mar = OxmlElement("w:tcMar")
-    for lado in ("top", "left", "bottom", "right"):
-        e = OxmlElement(f"w:{lado}")
-        e.set(qn("w:w"), str(int(cm * 567)))
-        e.set(qn("w:type"), "dxa")
-        mar.append(e)
-    tcPr.append(mar)
-
-def run_fmt(run, size=11, bold=False, italic=False, color=NEGRO, font="Calibri"):
-    run.font.name = font
-    run._element.rPr.rFonts.set(qn("w:hAnsi"), font)
-    run._element.rPr.rFonts.set(qn("w:cs"), font)
-    run.font.size = Pt(size)
-    run.bold = bold
-    run.italic = italic
-    run.font.color.rgb = color
-    return run
-
-def salto_pagina():
-    p = doc.add_paragraph()
-    p.add_run().add_break(WD_BREAK.PAGE)
-
-def h1(texto):
-    p = doc.add_paragraph(style="Heading 1")
-    p.paragraph_format.space_before = Pt(18)
-    p.paragraph_format.space_after = Pt(8)
-    p.paragraph_format.keep_with_next = True
-    run_fmt(p.add_run(texto), size=16, bold=True, color=RGBColor.from_string(AZUL_OSCURO))
-    return p
-
-def h2(texto):
-    p = doc.add_paragraph(style="Heading 2")
-    p.paragraph_format.space_before = Pt(12)
-    p.paragraph_format.space_after = Pt(6)
-    p.paragraph_format.keep_with_next = True
-    run_fmt(p.add_run(texto), size=13, bold=True, color=RGBColor.from_string("2F5496"))
-    return p
-
-def par(texto, after=6, align=WD_ALIGN_PARAGRAPH.JUSTIFY):
-    """Parrafo normal. Soporta **negritas** y `codigo` en linea."""
-    p = doc.add_paragraph()
-    p.alignment = align
-    p.paragraph_format.space_after = Pt(after)
-    p.paragraph_format.line_spacing = 1.15
-    for trozo in re.split(r"(\*\*[^*]+\*\*|`[^`]+`)", texto):
-        if not trozo:
-            continue
-        if trozo.startswith("**"):
-            run_fmt(p.add_run(trozo[2:-2]), bold=True)
-        elif trozo.startswith("`"):
-            run_fmt(p.add_run(trozo[1:-1]), size=10, font="Consolas", color=RGBColor.from_string("C7254E"))
-        else:
-            run_fmt(p.add_run(trozo))
-    return p
-
-def vinetas(items, numerada=False):
-    for i, it in enumerate(items, 1):
-        p = par(("%d. " % i if numerada else "•  ") + it, after=3, align=WD_ALIGN_PARAGRAPH.LEFT)
-        p.paragraph_format.left_indent = Cm(0.9)
-        p.paragraph_format.first_line_indent = Cm(-0.5)
-
-def bloque(texto, oscuro=False, size=8.5):
-    """Bloque de codigo (gris claro) o de consola (fondo oscuro) en una tabla de una celda."""
-    t = doc.add_table(rows=1, cols=1)
-    t.alignment = WD_TABLE_ALIGNMENT.CENTER
-    c = t.cell(0, 0)
-    sombrear(c, "1E1E1E" if oscuro else "F3F3F3")
-    margenes_celda(c)
-    color = RGBColor(0xE6, 0xE6, 0xE6) if oscuro else RGBColor(0x1E, 0x1E, 0x1E)
-    lineas = texto.split("\n")
-    p = c.paragraphs[0]
-    for i, linea in enumerate(lineas):
-        if i > 0:
-            p = c.add_paragraph()
-        p.paragraph_format.space_after = Pt(0)
-        p.paragraph_format.line_spacing = 1.0
-        es_prompt = oscuro and linea.startswith("$ ")
-        run_fmt(p.add_run(linea if linea else " "), size=size, font="Consolas",
-                color=RGBColor(0x7C, 0xD9, 0x7C) if es_prompt else color, bold=es_prompt)
-    doc.add_paragraph().paragraph_format.space_after = Pt(0)
-
-def leyenda(texto):
-    p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p.paragraph_format.space_after = Pt(10)
-    run_fmt(p.add_run(texto), size=9, italic=True)
-
-def imagen(nombre, texto, ancho=15.5):
-    p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p.paragraph_format.keep_with_next = True
-    p.add_run().add_picture(os.path.join(IMG, nombre), width=Cm(ancho))
-    leyenda(texto)
-
-def tabla(encabezados, filas, anchos=None, size=9):
+def tabla(texto, encabezados, filas, anchos=None, size=10):
+    leyenda_tabla(texto)
     t = doc.add_table(rows=1, cols=len(encabezados))
     t.style = "Table Grid"
     t.alignment = WD_TABLE_ALIGNMENT.CENTER
     for i, e in enumerate(encabezados):
         c = t.rows[0].cells[i]
-        sombrear(c, AZUL_OSCURO)
-        c.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
-        run_fmt(c.paragraphs[0].add_run(e), size=size, bold=True, color=RGBColor(255, 255, 255))
-    for k, fila in enumerate(filas):
+        sombrear(c, "D9D9D9")
+        p = c.paragraphs[0]
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        espaciado(p, interlineado=1.0, despues=0)
+        fmt(p.add_run(e), size=size, bold=True)
+    for fila in filas:
         cells = t.add_row().cells
         for i, v in enumerate(fila):
-            if k % 2 == 1:
-                sombrear(cells[i], "E9EEF7")
-            cells[i].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
-            run_fmt(cells[i].paragraphs[0].add_run(str(v)), size=size)
+            p = cells[i].paragraphs[0]
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            espaciado(p, interlineado=1.0, despues=0)
+            fmt(p.add_run(str(v)), size=size)
     if anchos:
         for fila in t.rows:
             for i, w in enumerate(anchos):
                 fila.cells[i].width = Cm(w)
-    # repetir encabezado si la tabla cruza de pagina
     trPr = t.rows[0]._tr.get_or_add_trPr()
     th = OxmlElement("w:tblHeader")
     th.set(qn("w:val"), "true")
     trPr.append(th)
-    return t
+    q = doc.add_paragraph()
+    espaciado(q, interlineado=1.0, despues=6)
+
+def codigo(texto):
+    t = doc.add_table(rows=1, cols=1)
+    t.alignment = WD_TABLE_ALIGNMENT.CENTER
+    c = t.cell(0, 0)
+    sombrear(c, "F2F2F2")
+    p = c.paragraphs[0]
+    for i, linea in enumerate(texto.split("\n")):
+        if i:
+            p = c.add_paragraph()
+        espaciado(p, interlineado=1.0, despues=0)
+        fmt(p.add_run(linea.replace("\t", "    ") or " "), size=8.5, font="Courier New")
+    q = doc.add_paragraph()
+    espaciado(q, interlineado=1.0, despues=6)
+
+def campo_simple(run, instr):
+    for tipo in ("begin", "instr", "separate"):
+        if tipo == "instr":
+            e = OxmlElement("w:instrText")
+            e.set(qn("xml:space"), "preserve")
+            e.text = instr
+        else:
+            e = OxmlElement("w:fldChar")
+            e.set(qn("w:fldCharType"), tipo)
+        run._r.append(e)
+
+def cerrar_campo(run):
+    e = OxmlElement("w:fldChar")
+    e.set(qn("w:fldCharType"), "end")
+    run._r.append(e)
 
 # ----------------------------------------------------------------------------
-# Numero de pagina en el pie (sin numero en la portada)
+# INDICE (tabla de contenido automatica de Word)
 # ----------------------------------------------------------------------------
-sec = doc.sections[0]
-sec.different_first_page_header_footer = True
-fp = sec.footer.paragraphs[0] if sec.footer.paragraphs else sec.footer.add_paragraph()
-fp.alignment = WD_ALIGN_PARAGRAPH.CENTER
-def campo(p, instr):
-    r = p.add_run()
-    for tipo, val in (("begin", None), ("instr", instr), ("separate", None), ("text", "1"), ("end", None)):
-        if tipo == "instr":
-            e = OxmlElement("w:instrText"); e.set(qn("xml:space"), "preserve"); e.text = val
-        elif tipo == "text":
-            e = OxmlElement("w:t"); e.text = val
-        else:
-            e = OxmlElement("w:fldChar"); e.set(qn("w:fldCharType"), tipo)
-        r._r.append(e)
-    run_fmt(r, size=9, color=RGBColor(0x59, 0x59, 0x59))
-run_fmt(fp.add_run("Proyecto #1 – Sistemas Operativos I  |  Página "), size=9, color=RGBColor(0x59, 0x59, 0x59))
-campo(fp, "PAGE")
+salto_pagina()
+p = doc.add_paragraph()
+p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+espaciado(p, despues=12)
+fmt(p.add_run("Índice"), size=14, bold=True)
+marcador_indice = doc.add_paragraph()  # se reemplaza al final por el campo TOC
 
 # ----------------------------------------------------------------------------
 # CONTENIDO
 # ----------------------------------------------------------------------------
-salto_pagina()
+titulo("Introducción", nueva_pagina=True)
+par("La programación concurrente reúne las técnicas que permiten que varias partes de un programa avancen al mismo "
+    "tiempo. Hoy prácticamente cualquier computadora tiene un procesador con varios núcleos, de modo que un programa "
+    "que se ejecuta en un único hilo aprovecha solo una fracción del CPU disponible. Para el sistema operativo este "
+    "tema está ligado a la gestión de procesos e hilos, ya que es el planificador (scheduler) quien decide en qué "
+    "núcleo y en qué momento se ejecuta cada hilo (Silberschatz et al., 2018).")
+par("En este proyecto se parte de un algoritmo sencillo, el Bubble Sort, y se transforma en tres pasos para observar "
+    "con datos medidos qué ocurre con el número de intercambios y con el tiempo de ejecución (Pineda, 2026). En el "
+    "primer paso se usa el Bubble Sort clásico modificado para contar los intercambios. En el segundo, el arreglo se "
+    "divide en dos mitades que se ordenan por separado y luego se mezclan (merge), todavía de forma secuencial. En el "
+    "tercero, cada mitad se ordena en un hilo (thread) de Java distinto y, cuando ambos terminan, se hace un único "
+    "merge.")
 
-h1("Índice")
-indice = [
-    "1. Introducción y objetivos",
-    "2. Entorno de trabajo y estructura del proyecto",
-    "3. Paso 1 – Bubble Sort secuencial con contador de intercambios",
-    "4. Paso 2 – Dividir el arreglo en dos mitades y mezclar (merge)",
-    "5. Paso 3 – Ordenar las dos mitades en hilos (threads) separados",
-    "6. Comentarios de implementación y dificultades encontradas",
-    "7. Conclusiones generales",
-    "8. Guía para demostrar el proyecto paso a paso",
-    "Anexo A – Código fuente completo",
-    "Anexo B – Salida completa de los experimentos",
-]
-for linea in indice:
-    par(linea, after=2, align=WD_ALIGN_PARAGRAPH.LEFT)
+titulo("Objetivos")
+par("El objetivo general es dar los primeros pasos en la programación concurrente con los hilos de Java y medir su "
+    "efecto real sobre el rendimiento. De forma específica, se busca medir cuántos intercambios realiza el Bubble Sort "
+    "para 10, 100, 1,000 y 10,000 elementos y explicar ese comportamiento con la teoría; determinar si dividir el "
+    "problema en dos mitades mejora el rendimiento y por qué; implementar la versión con hilos usando Thread, start y "
+    "join y compararla con las versiones secuenciales; y analizar cómo se comportaría la versión con hilos en un CPU "
+    "de un solo núcleo o de dos núcleos, simulándolo en la práctica al limitar los procesadores que puede usar el "
+    "programa.")
 
-# ---------------------------------------------------------------- 1
-h1("1. Introducción y objetivos")
-par("La programación concurrente agrupa las técnicas que permiten que varias partes de un programa avancen al "
-    "mismo tiempo. Hoy casi cualquier computadora de escritorio o laptop tiene varios núcleos, así que un programa "
-    "que corre en un solo hilo de ejecución está desperdiciando la mayor parte del CPU. Para el sistema operativo "
-    "esto se relaciona directamente con la gestión de procesos e hilos: el planificador (scheduler) decide en qué "
-    "núcleo y en qué momento corre cada hilo.")
-par("En este proyecto se parte de un algoritmo muy sencillo, el **Bubble Sort**, y se va transformando en tres "
-    "pasos para observar, con datos medidos, qué pasa con el número de intercambios y con el tiempo de ejecución:")
-vinetas([
-    "**Paso 1:** Bubble Sort clásico (un solo hilo), modificado para contar los intercambios.",
-    "**Paso 2:** el arreglo se divide en dos mitades, cada mitad se ordena por separado y al final se mezclan "
-    "(merge). Sigue siendo un programa secuencial.",
-    "**Paso 3:** las dos mitades se ordenan en dos hilos (threads) de Java que corren en paralelo; al terminar "
-    "ambos se hace un join y un único merge.",
-])
-par("**Objetivos:**", after=2)
-vinetas([
-    "Medir cuántos intercambios hace Bubble Sort para 10, 100, 1,000 y 10,000 elementos (y puntos intermedios) "
-    "y explicar el comportamiento con la teoría.",
-    "Determinar si dividir el problema en dos mitades mejora el rendimiento y por qué.",
-    "Usar hilos en Java (Thread, start, join) y comparar el tiempo contra la versión secuencial.",
-    "Analizar cómo se comportaría la versión con hilos en un CPU single-core y en uno dual-core, "
-    "simulándolo en la práctica al limitar los núcleos que puede usar el programa.",
-], numerada=True)
-
-# ---------------------------------------------------------------- 2
-h1("2. Entorno de trabajo y estructura del proyecto")
-h2("2.1 Entorno de pruebas")
-tabla(["Elemento", "Valor"], [
-    ["Sistema operativo", "Linux (kernel 6.x, 64 bits)"],
-    ["Java", "OpenJDK 21.0.10 (javac + java)"],
-    ["Procesador", "Intel Xeon @ 2.10 GHz, 4 núcleos"],
-    ["Herramienta para limitar núcleos", "taskset (Linux) – en Windows: start /affinity"],
+titulo("Entorno de trabajo")
+par("Todas las pruebas se realizaron en una laptop con Windows 11, usando Visual Studio Code como editor y la "
+    "terminal integrada para compilar y ejecutar. Las características del equipo se resumen en la Tabla 1.")
+tabla("Entorno en el que se obtuvieron los resultados.", ["Elemento", "Valor"], [
+    ["Sistema operativo", "Windows 11 de 64 bits"],
+    ["Procesador", "AMD Ryzen 5 7520U, 2.80 GHz base (hasta 4.1 GHz)"],
+    ["Núcleos", "4 núcleos físicos, 8 procesadores lógicos (SMT)"],
+    ["Memoria caché", "L1: 256 KB, L2: 2 MB, L3: 4 MB"],
+    ["Memoria RAM", "7.2 GB"],
+    ["Java", "JDK 27 (javac 27)"],
+    ["Editor y terminal", "Visual Studio Code con Extension Pack for Java, PowerShell y CMD"],
     ["Datos de prueba", "Enteros aleatorios entre 0 y 99,999 con semilla fija (12345 + N)"],
-    ["Medición de tiempo", "System.nanoTime(), mediana de 5 repeticiones, con calentamiento previo de la JVM"],
-], anchos=[5.5, 10.5])
-leyenda("Tabla 1. Entorno en el que se obtuvieron los resultados de este informe.")
-par("Como los datos se generan con una **semilla fija**, los tres programas ordenan exactamente los mismos números "
-    "para cada tamaño N. Por eso los números de intercambios se pueden comparar directamente entre pasos, y "
-    "cualquier persona que corra el programa obtiene los mismos intercambios (los tiempos sí cambian según la "
-    "computadora).")
+    ["Medición de tiempo", "System.nanoTime(), mediana de 5 repeticiones con calentamiento previo de la JVM"],
+], anchos=[4.5, 11.0], size=11)
+par("El proyecto está formado por cuatro programas sin paquete (package), guardados en la misma carpeta: "
+    "`bubbleSort.java` para el Paso 1, `bubbleSortDividido.java` para el Paso 2, `bubbleSortHilos.java` para el Paso 3 "
+    "y `Comparacion.java`, que ejecuta las tres versiones con exactamente los mismos datos, repite cada medición cinco "
+    "veces y guarda los resultados en un archivo CSV que se puede abrir en Excel.")
+captura("01_proyecto.png", "Carpeta del proyecto en Visual Studio Code con los archivos fuente y compilados.", 7.5)
+par("Para compilar se abrió la terminal integrada de Visual Studio Code en la carpeta del proyecto y se ejecutó "
+    "`javac *.java`. Cuando el comando no muestra ningún mensaje significa que los cuatro programas compilaron sin "
+    "errores. Después, cada programa se ejecuta con `java` seguido del nombre de la clase y, si se desea, de los "
+    "tamaños de arreglo a probar.")
+captura("02_compilar.png", "Verificación de la versión del compilador (javac 27) y compilación de los cuatro programas.", 11)
+par("Como los datos se generan con una semilla fija, los tres programas ordenan exactamente los mismos números para "
+    "cada tamaño N. Por eso el número de intercambios se puede comparar directamente entre pasos y es idéntico en "
+    "cualquier computadora, mientras que los tiempos dependen del equipo y varían un poco entre ejecuciones.")
 
-h2("2.2 Estructura del proyecto")
-bloque("""Proyecto1_SO/
-|-- src/
-|   |-- bubbleSort.java          Paso 1: bubble sort + contador
-|   |-- bubbleSortDividido.java  Paso 2: dos mitades + merge
-|   |-- bubbleSortHilos.java     Paso 3: dos hilos + join + merge
-|   `-- Comparacion.java         los 3 pasos con los mismos datos -> CSV
-|-- resultados/                  salidas de consola (.txt) y tablas (.csv)
-`-- informe/                     informe, gráficas y scripts""")
-leyenda("Figura 1. Organización de los archivos del proyecto.")
+# ---------------------------------------------------------------- PASO 1
+titulo("Paso 1: Bubble Sort secuencial con contador de intercambios", nueva_pagina=True)
+titulo("Modificación realizada", 2)
+par("Se transcribió el programa del enunciado en el archivo `bubbleSort.java`. La modificación pedida consiste en "
+    "contar los intercambios, así que dentro del método `bubble_srt` se agregó la variable `intercambios`, que aumenta "
+    "en uno cada vez que se ejecuta el bloque de intercambio (swap), y el método ahora devuelve ese total para que el "
+    "`main` lo imprima. Se usó el tipo `long` en lugar de `int` porque con arreglos grandes el número de intercambios "
+    "puede superar el valor máximo de un `int`, que es 2,147,483,647.")
+captura("03_codigo_contador.png", "Método bubble_srt con el contador de intercambios agregado.")
+par("Además, el `main` acepta argumentos. Si se ejecuta sin argumentos corre el ejemplo original de ocho números; si "
+    "se le pasan tamaños, genera arreglos aleatorios de esos tamaños, los ordena, verifica que quedaron ordenados y "
+    "reporta intercambios y tiempo.")
 
-h2("2.3 Compilación y ejecución")
-par("Los programas no usan paquetes (package), por lo que se compilan y ejecutan directamente desde la terminal "
-    "(CMD/PowerShell en Windows o Terminal en Linux/Mac). También se pueden abrir en NetBeans o IntelliJ y "
-    "ejecutar con el botón Run, pasando los tamaños como argumentos del programa.")
-bloque("""$ cd Proyecto1_SO/src
-$ javac *.java                                 (compila los 4 programas)
-$ java bubbleSort                              (Paso 1 - ejemplo de 8 números)
-$ java bubbleSort 10 100 1000 10000            (Paso 1 - pruebas)
-$ java bubbleSortDividido 10 100 1000 10000    (Paso 2)
-$ java bubbleSortHilos 10 100 1000 10000       (Paso 3)
-$ java Comparacion                             (los 3 pasos -> resultados.csv)""", oscuro=True)
-leyenda("Figura 2. Comandos para compilar y ejecutar cada paso.")
+titulo("Ejecución con el ejemplo del enunciado", 2)
+captura("06_paso1_ejemplo.png", "Ejecución de java bubbleSort con el arreglo original {12, 9, 4, 99, 120, 1, 3, 10}.")
+par("El arreglo de ocho elementos necesitó **16 intercambios**. Ese número coincide exactamente con la cantidad de "
+    "inversiones del arreglo, es decir, con las parejas de números que están en el orden incorrecto, como el 12 que "
+    "aparece antes que el 9. Cada intercambio del Bubble Sort corrige exactamente una inversión, por lo que el total de "
+    "intercambios siempre es igual al número de inversiones (Cormen et al., 2022).")
 
-# ---------------------------------------------------------------- 3
-h1("3. Paso 1 – Bubble Sort secuencial con contador de intercambios")
-h2("3.1 Modificación realizada")
-par("Se transcribió el programa `bubbleSort.java` del enunciado. La modificación pedida es contar los intercambios: "
-    "se agregó una variable `long intercambios` dentro de `bubble_srt`, que se incrementa cada vez que se "
-    "ejecuta el bloque de intercambio (swap), y el método ahora la devuelve para que `main` la imprima. Se usó "
-    "`long` y no `int` porque para N grandes el número de intercambios puede pasar de 2,147,483,647.")
-bloque("""public static long bubble_srt(int a[], int n) {
-    int i, j, t = 0;
-    long intercambios = 0;                 // <-- NUEVO: contador
-    for (i = 0; i < n; i++) {
-        for (j = 1; j < (n - i); j++) {
-            if (a[j - 1] > a[j]) {
-                /* Inicio del intercambio */
-                t = a[j - 1];
-                a[j - 1] = a[j];
-                a[j] = t;
-                /* Final del intercambio */
-                intercambios++;            // <-- NUEVO: cuenta cada swap
-            }
-        }
-    }
-    return intercambios;                   // <-- NUEVO: se devuelve el total
-}""")
-leyenda("Figura 3. Método bubble_srt con el contador de intercambios.")
-par("Además, el `main` acepta argumentos: si se ejecuta sin argumentos corre el ejemplo original de 8 números; si "
-    "se le pasan tamaños (por ejemplo `java bubbleSort 10 100 1000 10000`) genera arreglos aleatorios de esos "
-    "tamaños, los ordena, verifica que quedaron ordenados y reporta intercambios y tiempo.")
+titulo("Pruebas con 10, 100, 1,000 y 10,000 elementos", 2)
+captura("07_paso1_pruebas.png", "Ejecución de java bubbleSort 10 100 1000 10000.")
+par("En esta ejecución se obtuvieron 29, 2,450, 245,941 y 24,998,680 intercambios, con tiempos de 0.005 ms, "
+    "0.137 ms, 4.560 ms y 88.813 ms respectivamente. Todos los arreglos quedaron ordenados.")
 
-h2("3.2 Ejecución con el ejemplo del enunciado")
-bloque(txt("paso1_ejemplo.txt"), oscuro=True)
-leyenda("Figura 4. Salida del Paso 1 con el arreglo original {12, 9, 4, 99, 120, 1, 3, 10}.")
-par("El arreglo de 8 elementos necesitó **16 intercambios**. Ese número no es casualidad: es exactamente la "
-    "cantidad de **inversiones** del arreglo, es decir, de parejas de números que están en el orden incorrecto "
-    "(por ejemplo 12 antes que 9). Cada intercambio de Bubble Sort arregla exactamente una inversión, así que "
-    "el total de intercambios siempre es igual al número de inversiones.")
-
-h2("3.3 Pruebas con 10, 100, 1,000 y 10,000 elementos")
-bloque(txt("paso1_pruebas.txt"), oscuro=True)
-leyenda("Figura 5. Salida del Paso 1 con 10, 100, 1,000 y 10,000 elementos aleatorios.")
-
-h2("3.4 Resultados con puntos intermedios")
-par("Para la gráfica se usaron también puntos intermedios (50, 250, 500, 750, 2,500, 5,000 y 7,500). La tabla "
-    "compara los intercambios medidos con dos referencias: el número de inversiones del arreglo (calculado con "
-    "otro algoritmo, en `Comparacion.java`) y el valor teórico esperado para datos aleatorios, **n(n−1)/4**.")
+titulo("Resultados con puntos intermedios", 2)
+par("Para la gráfica se agregaron puntos intermedios (50, 250, 500, 750, 2,500, 5,000 y 7,500 elementos) usando el "
+    "programa `Comparacion`. La Tabla 2 compara los intercambios medidos con el número de inversiones del arreglo, "
+    "calculado con otro algoritmo, y con el valor teórico esperado para datos aleatorios, n(n−1)/4.")
 filas = []
 for n in TAMANOS:
     if n > 10000:
         continue
-    r = M4[n]
-    filas.append([f_ent(n), f_ent(r["intercambios_paso1"]), f_ent(r["inversiones"]),
-                  f_ent(r["teorico_n(n-1)/4"]), f"{100 * r['intercambios_paso1'] / r['teorico_n(n-1)/4']:.1f} %",
-                  f_ms(r["ms_paso1"])])
-tabla(["N", "Intercambios medidos", "Inversiones", "Teórico n(n−1)/4", "Medido / teórico", "Tiempo (ms)"], filas,
-      anchos=[1.8, 3.2, 3.0, 3.0, 2.5, 2.5])
-leyenda("Tabla 2. Intercambios y tiempo del Paso 1 (tiempo = mediana de 5 ejecuciones).")
+    r = M8[n]
+    filas.append([ent(n), ent(r["intercambios_paso1"]), ent(r["inversiones"]), ent(r["teorico_n(n-1)/4"]),
+                  f"{100 * r['intercambios_paso1'] / r['teorico_n(n-1)/4']:.1f} %", ms(r["ms_paso1"])])
+tabla("Intercambios y tiempo del Paso 1 (tiempo como mediana de 5 ejecuciones).",
+      ["N", "Intercambios medidos", "Inversiones", "Teórico n(n−1)/4", "Medido / teórico", "Tiempo (ms)"], filas,
+      anchos=[1.8, 3.2, 2.8, 3.0, 2.4, 2.3])
+grafica("paso1_intercambios.png", "Intercambios del Paso 1 según el número de elementos.")
+grafica("paso1_tiempo.png", "Tiempo de ejecución del Paso 1 según el número de elementos.")
 
-imagen("paso1_intercambios.png", "Figura 6. Intercambios del Paso 1 vs. N. La línea punteada es la curva teórica n(n−1)/4.")
-imagen("paso1_tiempo.png", "Figura 7. Tiempo de ejecución del Paso 1 vs. N.")
+titulo("Interpretación de los resultados", 2)
+r1k, r10k = M8[1000], M8[10000]
+par("La curva de intercambios es una parábola y no una recta. Al multiplicar N por 10, los intercambios se "
+    f"multiplican aproximadamente por 100: de 10 a 100 elementos pasan de {ent(M8[10]['intercambios_paso1'])} a "
+    f"{ent(M8[100]['intercambios_paso1'])}, y de 1,000 a 10,000 pasan de {ent(r1k['intercambios_paso1'])} a "
+    f"{ent(r10k['intercambios_paso1'])}. Esto confirma que el Bubble Sort es un algoritmo de orden O(N²).")
+par("El valor n(n−1)/4 se explica porque en un arreglo de N elementos existen n(n−1)/2 parejas posibles y, si los "
+    "datos son aleatorios, cada pareja tiene la mitad de probabilidad de estar invertida. Como cada intercambio corrige "
+    "una inversión, el promedio esperado de intercambios es n(n−1)/4. Con pocos elementos la diferencia puede ser "
+    f"grande (con 10 elementos se midieron {ent(M8[10]['intercambios_paso1'])} contra 22.5 esperados), pero a partir "
+    "de 1,000 elementos la diferencia es menor al 2 %, porque con más datos el promedio se estabiliza. La columna de "
+    "inversiones coincide exactamente con los intercambios en todos los casos.")
+par("Aunque el número de intercambios depende de los datos, el Bubble Sort siempre realiza n(n−1)/2 comparaciones, el "
+    "doble del promedio de intercambios. Si el arreglo ya estuviera ordenado haría cero intercambios pero seguiría "
+    "haciendo todas las comparaciones, y si estuviera en orden inverso haría n(n−1)/2 intercambios, que es el peor "
+    "caso.")
+par(f"El tiempo también crece de forma cuadrática. Con 1,000 elementos tardó {ms(r1k['ms_paso1'])} ms y con 10,000 "
+    f"tardó {ms(r10k['ms_paso1'])} ms, unas {r10k['ms_paso1'] / r1k['ms_paso1']:.0f} veces más con diez veces más datos; "
+    f"con 50,000 elementos ya tardó {M8[50000]['ms_paso1'] / 1000:.2f} segundos. El aumento es algo mayor que el factor "
+    "100 esperado porque un arreglo de 10,000 enteros ocupa unos 40 KB y ya no cabe en la caché L1 de datos de un "
+    "núcleo (32 KB), así que el procesador tiene que ir más veces a memorias más lentas. Para N muy pequeños los "
+    "tiempos son de microsegundos y están dominados por el ruido del sistema operativo y por el compilador JIT de "
+    "Java; por eso cada medición se repitió cinco veces, se tomó la mediana y se hizo un calentamiento previo de la JVM.")
 
-h2("3.5 Interpretación de los resultados")
-r1k, r10k = M4[1000], M4[10000]
-par("**La curva es una parábola, no una recta.** Al multiplicar N por 10, los intercambios se multiplican "
-    f"aproximadamente por 100: de 10 a 100 elementos pasan de {f_ent(M4[10]['intercambios_paso1'])} a "
-    f"{f_ent(M4[100]['intercambios_paso1'])}; de 1,000 a 10,000 pasan de {f_ent(r1k['intercambios_paso1'])} a "
-    f"{f_ent(r10k['intercambios_paso1'])}. Esto confirma que Bubble Sort es un algoritmo **O(N²)**.")
-par("**¿Por qué exactamente n(n−1)/4?** En un arreglo de N elementos existen n(n−1)/2 parejas posibles. Si los "
-    "datos son aleatorios, cada pareja tiene 50 % de probabilidad de estar invertida, así que en promedio hay "
-    "n(n−1)/4 inversiones, y como vimos, intercambios = inversiones. La tabla muestra que los valores medidos "
-    f"quedan cerca del teórico: con N muy pequeño la diferencia puede ser grande (con 10 elementos se midieron "
-    f"{f_ent(M4[10]['intercambios_paso1'])} contra 22.5 esperados, porque depende mucho de cómo salieron esos pocos "
-    "números), pero para N ≥ 1,000 la diferencia es menor al 2 %, porque con más datos el promedio se "
-    "estabiliza. La columna de inversiones coincide exactamente con los intercambios en todos los casos.")
-par("**Comparaciones vs. intercambios.** Aunque el número de intercambios depende de los datos, Bubble Sort "
-    "siempre hace n(n−1)/2 comparaciones (dos veces más que los intercambios promedio). Si el arreglo ya "
-    "estuviera ordenado haría 0 intercambios pero seguiría haciendo todas las comparaciones; si estuviera "
-    "en orden inverso haría n(n−1)/2 intercambios (el peor caso).")
-par(f"**Tiempos.** El tiempo también crece de forma cuadrática: con 1,000 elementos tarda {f_ms(r1k['ms_paso1'])} ms "
-    f"y con 10,000 tarda {f_ms(r10k['ms_paso1'])} ms (≈{r10k['ms_paso1'] / r1k['ms_paso1']:.0f} veces más para 10 "
-    f"veces más datos). Con 50,000 elementos ya tarda {M4[50000]['ms_paso1'] / 1000:.1f} segundos. Para N muy "
-    "pequeños (10–100) los tiempos son de microsegundos y están dominados por ruido del sistema (el "
-    "planificador, el recolector de basura y el compilador JIT de Java), por lo que no son representativos; "
-    "por eso cada medición se repitió 5 veces y se tomó la mediana, después de \"calentar\" la JVM.")
+# ---------------------------------------------------------------- PASO 2
+titulo("Paso 2: División del arreglo en dos mitades y mezcla (merge)", nueva_pagina=True)
+titulo("Descripción del algoritmo", 2)
+par("El programa `bubbleSortDividido.java` hace todo el trabajo en un solo hilo de ejecución. Primero divide el "
+    "arreglo original en `left_array`, con la primera mitad, y `right_array`, con la segunda; si N es impar, la mitad "
+    "derecha se queda con el elemento sobrante. Luego llama a `bubble_srt` para la mitad izquierda y, cuando termina, "
+    "para la mitad derecha. Por último mezcla las dos listas ya ordenadas: compara el primer elemento pendiente de cada "
+    "lista, copia el menor al resultado y avanza, hasta agotar ambas. El merge no hace intercambios, solo comparaciones "
+    "y copias, y su costo es proporcional a N.")
+captura("04_codigo_merge.png", "Método ordenarYReportar de bubbleSortDividido: división, ordenamiento de cada mitad y merge.")
 
-# ---------------------------------------------------------------- 4
-h1("4. Paso 2 – Dividir el arreglo en dos mitades y mezclar (merge)")
-h2("4.1 Descripción del algoritmo")
-par("El programa `bubbleSortDividido.java` hace lo siguiente, todo en un solo hilo de ejecución:")
-vinetas([
-    "Divide el arreglo original en `left_array` (primera mitad) y `right_array` (segunda mitad). Si N es impar, "
-    "la mitad derecha se queda con el elemento sobrante.",
-    "Llama `bubble_srt(left_array, N/2)` y luego `bubble_srt(right_array, N − N/2)`, una después de la otra.",
-    "Mezcla (merge) las dos listas ya ordenadas: compara el primer elemento de cada lista, copia el menor al "
-    "resultado y avanza, hasta terminar ambas. El merge no hace intercambios, solo comparaciones y copias, y "
-    "cuesta O(N).",
-], numerada=True)
-bloque("""// 1) Dividir el arreglo en dos partes
-int mitad = n / 2;
-int left_array[]  = new int[mitad];
-int right_array[] = new int[n - mitad];
-System.arraycopy(array, 0,     left_array,  0, mitad);
-System.arraycopy(array, mitad, right_array, 0, n - mitad);
+titulo("Ejecución con el ejemplo del enunciado", 2)
+captura("08_paso2_ejemplo.png", "Ejecución de java bubbleSortDividido con el arreglo de ocho números.")
+par("Con el mismo arreglo de ocho números ahora solo se hicieron **6 intercambios**, tres en cada mitad, en lugar de "
+    "16. Las diez inversiones restantes eran entre un número de la mitad izquierda y uno de la derecha, como el 12 y el "
+    "1. Esas inversiones cruzadas las resuelve el merge sin hacer ningún intercambio.")
 
-// 2) Ordenar cada mitad por separado (secuencial: primero una, luego la otra)
-long intIzq = bubble_srt(left_array,  left_array.length);
-long intDer = bubble_srt(right_array, right_array.length);
+titulo("Pruebas con 10, 100, 1,000 y 10,000 elementos", 2)
+captura("09_paso2_pruebas.png", "Ejecución de java bubbleSortDividido 10 100 1000 10000.")
+par("En esta ejecución los intercambios totales fueron 9, 1,194, 124,287 y 12,536,532, aproximadamente la mitad que "
+    "en el Paso 1, con tiempos de 0.012 ms, 0.075 ms, 2.658 ms y 54.794 ms.")
 
-// 3) Mezclar las dos listas ordenadas
-int[] resultado = merge(left_array, right_array);
-
-public static int[] merge(int[] left, int[] right) {
-    int[] res = new int[left.length + right.length];
-    int i = 0, j = 0, k = 0;
-    while (i < left.length && j < right.length) {
-        if (left[i] <= right[j]) res[k++] = left[i++];
-        else                     res[k++] = right[j++];
-    }
-    while (i < left.length)  res[k++] = left[i++];
-    while (j < right.length) res[k++] = right[j++];
-    return res;
-}""")
-leyenda("Figura 8. Parte central del Paso 2: dividir, ordenar cada mitad y mezclar.")
-
-h2("4.2 Ejecución con el ejemplo del enunciado")
-bloque(txt("paso2_ejemplo.txt"), oscuro=True, size=6.8)
-leyenda("Figura 9. Salida del Paso 2 con el arreglo de 8 números: 6 intercambios en lugar de 16.")
-par("Con el mismo arreglo de 8 números, ahora solo se hicieron **6 intercambios** (3 en cada mitad) en lugar de "
-    "16. Las 10 inversiones restantes eran entre un número de la mitad izquierda y uno de la derecha (por "
-    "ejemplo 12 y 1); esas \"inversiones cruzadas\" las resuelve el merge sin hacer ningún intercambio.")
-
-h2("4.3 Pruebas con 10, 100, 1,000 y 10,000 elementos")
-bloque(txt("paso2_pruebas.txt"), oscuro=True, size=6.8)
-leyenda("Figura 10. Salida del Paso 2 con 10, 100, 1,000 y 10,000 elementos.")
-
+titulo("Comparación con el Paso 1", 2)
 filas = []
 for n in TAMANOS:
-    r = M4[n]
-    filas.append([f_ent(n), f_ent(r["intercambios_paso1"]), f_ent(r["intercambios_paso2"]),
+    r = M8[n]
+    filas.append([ent(n), ent(r["intercambios_paso1"]), ent(r["intercambios_paso2"]),
                   f"{100 * (1 - r['intercambios_paso2'] / r['intercambios_paso1']):.1f} %",
-                  f_ms(r["ms_paso1"]), f_ms(r["ms_paso2"]), f"{r['speedup_p1_vs_p2']:.2f}x"])
-tabla(["N", "Intercambios Paso 1", "Intercambios Paso 2", "Reducción", "ms Paso 1", "ms Paso 2", "Mejora (P1/P2)"],
-      filas, anchos=[1.7, 2.8, 2.8, 2.0, 2.2, 2.2, 2.2])
-leyenda("Tabla 3. Paso 1 vs. Paso 2 con los mismos datos. \"Mejora\" > 1 significa que el Paso 2 fue más rápido.")
-imagen("paso2_intercambios.png", "Figura 11. Intercambios del arreglo completo vs. dividido en dos mitades.")
+                  ms(r["ms_paso1"]), ms(r["ms_paso2"]), f"{r['speedup_p1_vs_p2']:.2f}x"])
+tabla("Paso 1 contra Paso 2 con los mismos datos. Una mejora mayor que 1 indica que el Paso 2 fue más rápido.",
+      ["N", "Intercambios Paso 1", "Intercambios Paso 2", "Reducción", "ms Paso 1", "ms Paso 2", "Mejora"],
+      filas, anchos=[1.6, 2.9, 2.9, 2.0, 2.2, 2.2, 1.7])
+grafica("paso2_intercambios.png", "Intercambios del arreglo completo contra el arreglo dividido en dos mitades.")
 
-h2("4.4 Conclusiones e interpretación del Paso 2")
-par("**Sí se mejoró el rendimiento**, aunque el programa sigue siendo secuencial. Para todos los tamaños los "
-    "intercambios se redujeron aproximadamente a la **mitad** (≈50 %), y a partir de unos 250 elementos el "
-    f"tiempo también bajó: con 10,000 elementos pasó de {f_ms(M4[10000]['ms_paso1'])} ms a "
-    f"{f_ms(M4[10000]['ms_paso2'])} ms y con 50,000 de {M4[50000]['ms_paso1'] / 1000:.2f} s a "
-    f"{M4[50000]['ms_paso2'] / 1000:.2f} s. Los principales factores de la mejora son:")
-vinetas([
-    "**El costo es cuadrático.** Ordenar N elementos cuesta proporcional a N². Ordenar dos mitades cuesta "
-    "2·(N/2)² = N²/2, o sea la mitad del trabajo. Aplica a comparaciones (de n(n−1)/2 a ≈n²/4) y a "
-    "intercambios (de ≈n²/4 a ≈n²/8).",
-    "**Las inversiones cruzadas se resuelven gratis.** Aproximadamente la mitad de las inversiones son entre "
-    "un elemento de la izquierda y uno de la derecha. Bubble Sort las resolvería una por una con intercambios; "
-    "el merge las resuelve con solo N comparaciones.",
-    "**El merge es barato.** Cuesta O(N), que es despreciable frente al O(N²) del ordenamiento cuando N es grande.",
-    "**Mejor uso de la memoria caché.** Cada mitad ocupa la mitad de memoria, así que cabe mejor en la caché "
-    "del CPU. Por eso en algunos tamaños (5,000–10,000) la mejora medida fue incluso mayor a 2x; para N muy "
-    "grandes la mejora se estabiliza cerca de 2x, que es lo que predice la teoría.",
-])
-par("**Cuándo no conviene:** para N pequeños (10–100) el Paso 2 fue igual o más lento, porque crear los dos "
-    "arreglos, copiar los datos y hacer el merge cuesta más que el poco trabajo que se ahorra. Esta misma idea, "
-    "aplicada de forma recursiva (dividir cada mitad otra vez, y otra vez…), es exactamente el algoritmo "
-    "**Merge Sort**, que baja la complejidad hasta O(N log N).")
+titulo("Conclusiones del Paso 2", 2)
+par("El rendimiento sí mejoró, aunque el programa sigue siendo secuencial. En todos los tamaños los intercambios se "
+    "redujeron aproximadamente a la mitad y, a partir de unos 250 elementos, también bajó el tiempo: con 10,000 "
+    f"elementos pasó de {ms(M8[10000]['ms_paso1'])} ms a {ms(M8[10000]['ms_paso2'])} ms y con 50,000 de "
+    f"{M8[50000]['ms_paso1'] / 1000:.2f} s a {M8[50000]['ms_paso2'] / 1000:.2f} s.")
+par("El factor principal es que el costo del Bubble Sort es cuadrático. Ordenar N elementos cuesta un tiempo "
+    "proporcional a N², mientras que ordenar dos mitades cuesta 2·(N/2)² = N²/2, es decir, la mitad del trabajo, tanto "
+    "en comparaciones como en intercambios. A esto se suma que aproximadamente la mitad de las inversiones son cruzadas, "
+    "entre un elemento de la izquierda y uno de la derecha; el Bubble Sort las corregiría una por una, mientras que el "
+    "merge las resuelve con solo N comparaciones. El merge, además, es barato: su costo lineal es despreciable frente "
+    "al costo cuadrático del ordenamiento cuando N es grande.")
+par("También influye la memoria caché. Cada mitad ocupa la mitad de la memoria y cabe mejor en la caché del "
+    f"procesador; con 10,000 elementos cada mitad ocupa unos 20 KB y sí entra en la caché L1, por eso la mejora medida "
+    f"en ese tamaño fue de {M8[10000]['speedup_p1_vs_p2']:.2f}x, mayor que el 2x teórico. Para tamaños muy grandes la "
+    f"mejora se estabiliza cerca de 2x ({M8[50000]['speedup_p1_vs_p2']:.2f}x con 50,000 elementos).")
+par("Para N pequeños, entre 10 y 100 elementos, el Paso 2 fue igual o más lento, porque crear los dos arreglos, copiar "
+    "los datos y hacer el merge cuesta más que el poco trabajo que se ahorra. Esta misma idea aplicada de forma "
+    "recursiva, dividiendo cada mitad una y otra vez, es el algoritmo Merge Sort, que reduce la complejidad a "
+    "O(N log N) (Cormen et al., 2022).")
 
-# ---------------------------------------------------------------- 5
-h1("5. Paso 3 – Ordenar las dos mitades en hilos (threads) separados")
-h2("5.1 Conceptos de hilos en Java")
-par("Un **hilo (thread)** es una secuencia de instrucciones que el sistema operativo puede planificar de forma "
-    "independiente. Todos los hilos de un proceso comparten la misma memoria (los mismos objetos y arreglos), "
-    "pero cada uno tiene su propia pila y su propio contador de programa. En Java cada objeto `Thread` "
-    "corresponde a un hilo real del sistema operativo, así que si hay varios núcleos, el planificador del SO "
-    "puede ejecutar dos hilos al mismo tiempo en núcleos diferentes. Los métodos que se usaron son:")
-tabla(["Método", "Qué hace"], [
-    ["extends Thread / run()", "Se crea una clase que hereda de Thread y en run() se pone el código que ejecutará el hilo."],
-    ["start()", "Le pide al sistema operativo crear el hilo y ejecutar run() en paralelo. El hilo main sigue sin esperar."],
-    ["join()", "El hilo que lo llama (main) se bloquea hasta que ese hilo termina. Es el punto de sincronización."],
-    ["Runtime.availableProcessors()", "Indica cuántos núcleos puede usar la JVM."],
-], anchos=[5.0, 11.0])
-leyenda("Tabla 4. Elementos de la API de hilos de Java usados en el Paso 3.")
+# ---------------------------------------------------------------- PASO 3
+titulo("Paso 3: Ordenamiento de las dos mitades en hilos separados", nueva_pagina=True)
+titulo("Conceptos de hilos en Java", 2)
+par("Un hilo (thread) es una secuencia de instrucciones que el sistema operativo puede planificar de forma "
+    "independiente. Todos los hilos de un proceso comparten la misma memoria, pero cada uno tiene su propia pila y su "
+    "propio contador de programa (Tanenbaum y Bos, 2015). En Java cada objeto `Thread` corresponde a un hilo real del "
+    "sistema operativo, así que, si hay varios núcleos libres, el planificador puede ejecutar dos hilos al mismo tiempo "
+    "en núcleos diferentes (Oracle, s.f.-a).")
+par("Para crear un hilo se escribe una clase que hereda de `Thread` y se coloca en el método `run` el código que "
+    "ejecutará. El método `start` le pide al sistema operativo crear el hilo y ejecutar `run` en paralelo, sin que el "
+    "hilo principal espere. El método `join` bloquea al hilo que lo llama hasta que el otro hilo termina, por lo que "
+    "funciona como punto de sincronización (Oracle, s.f.-b). Este esquema, en el que el hilo principal reparte el "
+    "trabajo, lo pone a correr y luego espera a que todo termine, se conoce como fork–join.")
 
-h2("5.2 Implementación")
-par("Se creó la clase interna `HiloOrdenador`, que recibe su mitad del arreglo y la ordena dentro de `run()`. "
-    "Cada hilo guarda sus intercambios en su **propia variable**, así los dos hilos nunca escriben en la misma "
-    "memoria y no hace falta sincronización. El hilo principal sigue el modelo **fork–join**:")
-bloque("""              main: divide el arreglo en left_array y right_array
-                                  |
-                +-----------------+-----------------+
-                | start()                   start() |
-                v                                   v
-     Hilo-Izquierdo                        Hilo-Derecho
-     bubble_srt(left_array)                bubble_srt(right_array)
-                |                                   |
-                +------------> join() <-------------+
-                                  |
-                   main: merge(left_array, right_array)
-                                  |
-                                 fin""", size=8.5)
-leyenda("Figura 12. Modelo fork–join del Paso 3: el main crea dos hilos, espera con join() y hace un único merge.")
-bloque("""static class HiloOrdenador extends Thread {
-    private final int[] arreglo;
-    long intercambios = 0;            // contador propio de cada hilo
+titulo("Implementación", 2)
+par("Se creó la clase interna `HiloOrdenador`, que recibe su mitad del arreglo y la ordena dentro de `run`. Cada hilo "
+    "guarda sus intercambios en su propia variable, de modo que los dos hilos nunca escriben en la misma memoria y no "
+    "hace falta sincronización. El hilo principal divide el arreglo, crea el hilo izquierdo y el derecho, llama a "
+    "`start` en ambos, espera con `join` a que los dos terminen y finalmente hace un único merge.")
+captura("05_codigo_hilos.png", "Clase HiloOrdenador, que hereda de Thread y ordena su mitad en el método run.")
 
-    HiloOrdenador(String nombre, int[] arreglo) {
-        super(nombre);
-        this.arreglo = arreglo;
-    }
+titulo("Ejecución", 2)
+captura("10_paso3_ejemplo.png", "Ejecución de java bubbleSortHilos con el ejemplo de ocho números.")
+captura("11_paso3_pruebas.png", "Ejecución de java bubbleSortHilos 10 100 1000 10000.")
+par("Los intercambios son idénticos a los del Paso 2, porque los hilos hacen exactamente el mismo trabajo, solo que "
+    "al mismo tiempo. Lo que cambia es el tiempo: con 10,000 elementos la versión con hilos tardó 24.333 ms, menos de "
+    "la mitad que el Paso 2 en la ejecución anterior (54.794 ms), pero con 10 elementos tardó 1.252 ms, muchísimo más "
+    "que las versiones secuenciales. El programa también informa que la JVM ve 8 procesadores disponibles, que son los "
+    "8 procesadores lógicos del Ryzen 5 7520U.")
 
-    @Override
-    public void run() {               // esto corre en el hilo nuevo
-        intercambios = bubble_srt(arreglo, arreglo.length);
-    }
-}
-
-// ----- en el hilo main -----
-HiloOrdenador hiloIzq = new HiloOrdenador("Hilo-Izquierdo", left_array);
-HiloOrdenador hiloDer = new HiloOrdenador("Hilo-Derecho",   right_array);
-hiloIzq.start();                      // ambos hilos empiezan a ordenar en paralelo
-hiloDer.start();
-
-hiloIzq.join();                       // main espera a que terminen los dos
-hiloDer.join();
-
-int[] resultado = merge(left_array, right_array);   // un único merge al final""")
-leyenda("Figura 13. Clase HiloOrdenador y secuencia start/join/merge del Paso 3.")
-
-h2("5.3 Ejecución")
-bloque(txt("paso3_ejemplo.txt"), oscuro=True, size=6.8)
-leyenda("Figura 14. Salida del Paso 3 con el ejemplo de 8 números.")
-bloque(txt("paso3_pruebas.txt"), oscuro=True, size=6.8)
-leyenda("Figura 15. Salida del Paso 3 con 10, 100, 1,000 y 10,000 elementos.")
-par("Los intercambios son **idénticos** a los del Paso 2 (los hilos hacen exactamente el mismo trabajo, solo que "
-    "al mismo tiempo). Lo que cambia es el **tiempo**: con 10,000 elementos el Paso 3 fue claramente más "
-    "rápido que el Paso 2, pero con 10 y 100 elementos tardó entre 0.5 y 1 ms, mucho más que las versiones secuenciales.")
-
-h2("5.4 Comparación de las tres versiones (CPU de 4 núcleos)")
+titulo("Comparación de las tres versiones", 2)
+par("Para comparar las tres versiones en igualdad de condiciones se ejecutó `java Comparacion`, que usa los mismos "
+    "datos para los tres pasos, repite cada medición cinco veces y reporta la mediana. La Figura 15 muestra una de esas "
+    "ejecuciones; los valores de las tablas corresponden a la ejecución guardada en el archivo resultados.csv, por lo "
+    "que los tiempos pueden diferir un poco de la captura, mientras que los intercambios son idénticos.")
+captura("13_comparacion.png", "Ejecución de java Comparacion con los tres pasos sobre los mismos datos.")
 filas = []
 for n in TAMANOS:
-    r = M4[n]
-    filas.append([f_ent(n), f_ms(r["ms_paso1"]), f_ms(r["ms_paso2"]), f_ms(r["ms_paso3"]),
+    r = M8[n]
+    filas.append([ent(n), ms(r["ms_paso1"]), ms(r["ms_paso2"]), ms(r["ms_paso3"]),
                   f"{r['speedup_p2_vs_p3']:.2f}x", f"{r['speedup_p1_vs_p3']:.2f}x"])
-tabla(["N", "ms Paso 1", "ms Paso 2", "ms Paso 3 (hilos)", "Paso 2 / Paso 3", "Paso 1 / Paso 3"], filas,
-      anchos=[2.0, 2.6, 2.6, 3.0, 2.8, 2.8])
-leyenda("Tabla 5. Tiempos (mediana de 5) de las tres versiones. Valores > 1 en las dos últimas columnas indican "
-        "que la versión con hilos fue más rápida.")
-imagen("tiempos_tres_versiones.png", "Figura 16. Tiempo de las tres versiones en escala logarítmica.")
+tabla("Tiempos de las tres versiones con los 8 procesadores lógicos (mediana de 5 ejecuciones). Los valores mayores "
+      "que 1 en las dos últimas columnas indican que la versión con hilos fue más rápida.",
+      ["N", "ms Paso 1", "ms Paso 2", "ms Paso 3", "Paso 2 / Paso 3", "Paso 1 / Paso 3"], filas,
+      anchos=[2.0, 2.6, 2.6, 2.6, 2.8, 2.8])
+grafica("tiempos_tres_versiones.png", "Tiempo de las tres versiones en escala logarítmica.")
 
-h2("5.5 ¿Cómo operaría en un CPU single-core o dual-core? (experimento)")
-par("Para no quedarse solo en la teoría, se repitió el experimento completo limitando los núcleos que el sistema "
-    "operativo le permite usar al programa (afinidad de CPU). En Linux se hace con `taskset` y en Windows con "
-    "`start /affinity`:")
-bloque("""$ taskset -c 0   java Comparacion resultados_1nucleo.csv 5    (single-core)
-$ taskset -c 0,1 java Comparacion resultados_2nucleos.csv 5   (dual-core)
-$ java Comparacion resultados_multicore.csv 5                 (4 núcleos)
+titulo("Uso de los núcleos durante la ejecución", 2)
+par("Mientras se ejecutaban las pruebas se observó el Administrador de tareas de Windows. En la Figura 17, tomada "
+    "durante la primera parte de `Comparacion`, el uso total del CPU se mantiene bajo, con picos cercanos al 15 %, "
+    "porque la mayor parte del tiempo trabaja un solo hilo. En la Figura 18, al ejecutar `java bubbleSortHilos 100000`, "
+    "el uso sube a valores entre 25 % y 35 %. Esto es coherente con lo esperado: el equipo tiene 8 procesadores "
+    "lógicos, así que cada hilo que trabaja al 100 % representa aproximadamente un 12.5 % del total, y dos hilos "
+    "trabajando a la vez representan alrededor del 25 %. En esa ejecución, ordenar 100,000 elementos con dos hilos "
+    "tomó 3,392.665 ms y requirió 1,247,731,272 intercambios.")
+captura("14_cpu_paso2.png", "Uso del CPU durante la primera parte de la ejecución de Comparacion.")
+captura("15_cpu_paso3.png", "Uso del CPU al ejecutar bubbleSortHilos con 100,000 elementos.")
+par("La misma figura muestra que la memoria RAM estaba al 97 % de uso (7.0 de 7.2 GB), un dato que se relaciona con "
+    "una de las dificultades descritas más adelante.")
 
-REM Equivalente en Windows (CMD):
-C:\\> start /affinity 1 /wait java Comparacion resultados_1nucleo.csv 5
-C:\\> start /affinity 3 /wait java Comparacion resultados_2nucleos.csv 5""", oscuro=True)
-leyenda("Figura 17. Comandos para simular CPUs de 1 y 2 núcleos.")
-par("Al correr con `taskset -c 0` el programa confirma que la JVM solo ve un procesador "
-    "(\"Nucleos disponibles para la JVM: 1\"). La tabla muestra el speedup del Paso 3 respecto al Paso 2 "
-    "(tiempo Paso 2 ÷ tiempo Paso 3) en cada caso:")
+titulo("Simulación de un CPU single-core y dual-core", 2)
+par("Para responder cómo operaría la versión con hilos en un CPU de uno o dos núcleos se repitió el experimento "
+    "limitando los procesadores lógicos en los que Windows puede ejecutar el programa, lo que se conoce como afinidad "
+    "de CPU. Esto se hace con el comando `start /affinity` de CMD (Microsoft, 2023), donde el valor 1 permite usar solo "
+    "el procesador lógico 0 y el valor 3 permite usar los procesadores lógicos 0 y 1. Como la terminal de Visual Studio "
+    "Code es PowerShell, el comando se ejecutó a través de CMD con `cmd /c \"start /affinity 1 /wait /b java "
+    "Comparacion r_1nucleo.csv 5\"` y su equivalente con afinidad 3.")
+captura("16_1nucleo.png", "Ejecución de Comparacion limitada a un procesador lógico (afinidad 1).")
+captura("17_2nucleos.png", "Ejecución de Comparacion limitada a dos procesadores lógicos (afinidad 3).")
+par("Las capturas muestran ejecuciones individuales, por lo que sus tiempos pueden variar un poco respecto a los de "
+    "la Tabla 5, que provienen de los archivos r_1nucleo.csv y r_2nucleos.csv. En ambas ejecuciones el programa sigue indicando que la JVM ve 8 procesadores, porque en Windows el método "
+    "`availableProcessors` reporta los procesadores del equipo y no la afinidad asignada. Sin embargo, los tiempos "
+    "confirman que la restricción sí se aplicó: con un solo procesador lógico la versión con hilos dejó de ganar "
+    "tiempo, como se ve en la Tabla 5 y en la Figura 21.")
 filas = []
 for n in TAMANOS:
-    filas.append([f_ent(n),
-                  f_ms(M1[n]["ms_paso2"]), f_ms(M1[n]["ms_paso3"]), f"{M1[n]['speedup_p2_vs_p3']:.2f}x",
-                  f_ms(M2[n]["ms_paso2"]), f_ms(M2[n]["ms_paso3"]), f"{M2[n]['speedup_p2_vs_p3']:.2f}x",
-                  f"{M4[n]['speedup_p2_vs_p3']:.2f}x"])
-tabla(["N", "1 núcleo\nms P2", "1 núcleo\nms P3", "1 núcleo\nspeedup", "2 núcleos\nms P2", "2 núcleos\nms P3",
-       "2 núcleos\nspeedup", "4 núcleos\nspeedup"], filas, anchos=[1.6, 2.0, 2.0, 1.9, 2.0, 2.0, 1.9, 1.9], size=8)
-leyenda("Tabla 6. Paso 2 (secuencial) vs. Paso 3 (hilos) con 1, 2 y 4 núcleos disponibles.")
-imagen("speedup_nucleos.png", "Figura 18. Speedup de la versión con hilos según el número de núcleos. "
-       "Por encima de 1 los hilos ayudan; por debajo, estorban.")
+    filas.append([ent(n), ms(M1[n]["ms_paso2"]), ms(M1[n]["ms_paso3"]), f"{M1[n]['speedup_p2_vs_p3']:.2f}x",
+                  ms(M2[n]["ms_paso2"]), ms(M2[n]["ms_paso3"]), f"{M2[n]['speedup_p2_vs_p3']:.2f}x",
+                  f"{M8[n]['speedup_p2_vs_p3']:.2f}x"])
+tabla("Paso 2 (secuencial) contra Paso 3 (hilos) con 1, 2 y 8 procesadores lógicos. Speedup = tiempo Paso 2 / tiempo Paso 3.",
+      ["N", "1 proc. ms P2", "1 proc. ms P3", "1 proc. speedup", "2 proc. ms P2", "2 proc. ms P3",
+       "2 proc. speedup", "8 proc. speedup"], filas, anchos=[1.5, 2.0, 2.0, 1.9, 2.0, 2.0, 1.9, 1.9], size=9)
+grafica("speedup_nucleos.png", "Aceleración de la versión con hilos según los procesadores disponibles. Por encima de 1 "
+        "los hilos ayudan y por debajo estorban.")
 
-h2("5.6 Conclusiones del Paso 3")
-par("Comparando con la evidencia del Paso 2, la respuesta a si ejecutar con hilos es más eficiente, igual o peor "
-    "es: **depende del tamaño del problema y del número de núcleos**.")
-vinetas([
-    f"**Multinúcleo y N grande → más eficiente.** Con 2 o más núcleos y N ≥ ~2,500 los hilos son más rápidos. "
-    f"Para N = 50,000 el Paso 3 tardó {M4[50000]['ms_paso3']:.0f} ms contra {M4[50000]['ms_paso2']:.0f} ms del "
-    f"Paso 2 (≈{M4[50000]['speedup_p2_vs_p3']:.1f}x) y contra {M4[50000]['ms_paso1']:.0f} ms del Paso 1 "
-    f"(≈{M4[50000]['speedup_p1_vs_p3']:.1f}x). Es decir: dividir el problema da ≈2x y paralelizarlo da otro ≈2x.",
-    "**N pequeño → peor.** Crear e iniciar un hilo del sistema operativo cuesta del orden de 0.2–0.4 ms. Con "
-    "10–1,000 elementos ordenar tarda menos que eso, así que la versión con hilos llega a ser más de 100 veces más lenta. "
-    "El paralelismo solo conviene cuando cada hilo tiene suficiente trabajo para compensar el costo de crearlo.",
-    "**Single-core → no mejora (igual o un poco peor).** Con un solo núcleo los dos hilos no pueden correr al "
-    "mismo tiempo: el planificador del SO los alterna (time-slicing) con cambios de contexto. El trabajo total "
-    f"es el mismo que en el Paso 2, más el costo de crear hilos y de los cambios de contexto; por eso el speedup "
-    f"medido quedó entre {min(M1[n]['speedup_p2_vs_p3'] for n in TAMANOS if n >= 5000):.2f}x y "
-    f"{max(M1[n]['speedup_p2_vs_p3'] for n in TAMANOS if n >= 5000):.2f}x para N ≥ 5,000. Aun así, el Paso 3 "
-    "en un solo núcleo sigue siendo más rápido que el Paso 1, porque conserva la ventaja algorítmica de dividir.",
-    "**Dual-core → hasta ≈2x.** Con dos núcleos cada hilo tiene su propio núcleo y ambas mitades se ordenan "
-    f"realmente al mismo tiempo. Para N = 50,000 el speedup fue {M2[50000]['speedup_p2_vs_p3']:.2f}x, muy cerca "
-    "del máximo teórico de 2x. No llega exactamente a 2 porque dividir, crear hilos y el merge son partes "
-    "secuenciales (Ley de Amdahl) y porque las mitades pueden tener distinta cantidad de inversiones, entonces un "
-    "hilo termina antes y el otro marca el tiempo.",
-    "**Más de 2 núcleos no ayuda más.** Con 4 núcleos el speedup fue prácticamente el mismo que con 2, porque el "
-    "programa solo crea 2 hilos: los otros núcleos quedan sin trabajo. Para aprovecharlos habría que dividir en "
-    "más partes (por ejemplo, tantas como `availableProcessors()`).",
-    "Los valores mayores a 2x en algunos tamaños intermedios (5,000–10,000) se explican porque cada núcleo tiene "
-    "su propia caché L1/L2: al repartir las mitades en dos núcleos, cada mitad cabe mejor en caché. También hay "
-    "variación normal entre mediciones.",
-])
+titulo("Conclusiones del Paso 3", 2)
+lo1 = [M1[n]["speedup_p2_vs_p3"] for n in TAMANOS if n >= 5000]
+par("Con la evidencia del Paso 2 se puede concluir que ejecutar las mitades en hilos es más eficiente, igual o peor "
+    "según el tamaño del problema y los núcleos disponibles. Con todos los procesadores disponibles y N a partir de "
+    f"unos 2,500 elementos, los hilos fueron más rápidos. Con 50,000 elementos el Paso 3 tardó "
+    f"{M8[50000]['ms_paso3']:.0f} ms contra {M8[50000]['ms_paso2']:.0f} ms del Paso 2 "
+    f"({M8[50000]['speedup_p2_vs_p3']:.2f}x) y contra {M8[50000]['ms_paso1']:.0f} ms del Paso 1 "
+    f"({M8[50000]['speedup_p1_vs_p3']:.2f}x). Es decir, dividir el problema aportó una mejora cercana a 2x y "
+    "paralelizarlo aportó otra mejora cercana a 2x, muy próxima al máximo teórico para dos hilos.")
+par("Con N pequeño la versión con hilos fue peor. Crear e iniciar un hilo del sistema operativo cuesta del orden de "
+    f"décimas de milisegundo; con 10 elementos el Paso 3 tardó {ms(M8[10]['ms_paso3'])} ms, mientras que el Paso 2 "
+    f"tardó {ms(M8[10]['ms_paso2'])} ms. El paralelismo solo conviene cuando cada hilo tiene suficiente trabajo para "
+    "compensar el costo de crearlo.")
+par("En un CPU de un solo núcleo la versión con hilos no mejora. Los dos hilos no pueden correr al mismo tiempo, así "
+    "que el planificador los alterna por turnos (time-slicing) con cambios de contexto (Silberschatz et al., 2018). El "
+    "trabajo total es el mismo que en el Paso 2, más el costo de crear los hilos y de los cambios de contexto; por eso "
+    f"el speedup medido con afinidad 1 quedó entre {min(lo1):.2f}x y {max(lo1):.2f}x para N de 5,000 en adelante, "
+    "prácticamente igual que la versión secuencial. Aun así, el Paso 3 en un núcleo sigue siendo más rápido que el "
+    "Paso 1, porque conserva la ventaja algorítmica de dividir el arreglo.")
+par("En un CPU de dos núcleos reales cada hilo tendría su propio núcleo y la mejora podría acercarse a 2x, como se "
+    "observó al usar todos los procesadores. La prueba con afinidad 3 dio una mejora menor, de "
+    f"{M2[50000]['speedup_p2_vs_p3']:.2f}x con 50,000 elementos y alrededor de 1x con 10,000. La razón es que en este "
+    "procesador los procesadores lógicos 0 y 1 son los dos hilos de hardware (SMT) del mismo núcleo físico; ambos hilos "
+    "de Java corrieron en un único núcleo que comparte sus unidades de ejecución y su caché, así que el resultado se "
+    "parece más a un single-core con SMT que a un dual-core real. La mejora nunca llega exactamente a 2x porque dividir "
+    "el arreglo, crear los hilos y hacer el merge son partes secuenciales, tal como describe la Ley de Amdahl "
+    "(Amdahl, 1967), y porque las mitades pueden tener distinta cantidad de inversiones, de modo que un hilo termina "
+    "antes y el otro determina el tiempo total.")
+par("Tener más de dos núcleos no ayuda más, porque el programa solo crea dos hilos y los demás núcleos quedan sin "
+    "trabajo. Para aprovecharlos habría que dividir el arreglo en más partes, por ejemplo en tantas como procesadores "
+    "reporte `availableProcessors`.")
 
-h2("5.7 Demostración de una condición de carrera")
-par("Durante el desarrollo se probó primero usar un **único contador estático compartido** por ambos hilos. El "
-    "resultado era incorrecto y cambiaba en cada ejecución. Para demostrarlo se dejó la opción `--compartido`, "
-    "que además del contador propio de cada hilo incrementa un contador global sin sincronizar:")
-bloque(txt("paso3_carrera.txt"), oscuro=True, size=6.8)
-leyenda("Figura 19. El contador compartido pierde millones de incrementos por la condición de carrera.")
-par("La instrucción `contadorCompartido++` parece una sola operación, pero en realidad son tres: leer el valor, "
-    "sumarle 1 y escribirlo. Si los dos hilos leen el mismo valor al mismo tiempo, los dos escriben el mismo "
-    "resultado y se pierde un incremento. Esto es una **condición de carrera** sobre una **sección crítica**, "
-    "el mismo problema que se estudia en la teoría del curso. Las soluciones posibles son `synchronized`, "
-    "`AtomicLong` o, la que se usó aquí, **no compartir el dato**: cada hilo cuenta en su propia variable y el "
-    "main suma los dos resultados después del `join()`, lo cual es correcto y además no pierde rendimiento.")
+titulo("Demostración de una condición de carrera", 2)
+par("Durante el desarrollo se probó primero usar un único contador estático compartido por ambos hilos, y el "
+    "resultado era incorrecto y cambiaba en cada ejecución. Para demostrarlo, el programa acepta la opción "
+    "`--compartido`, que además del contador propio de cada hilo incrementa un contador global sin sincronización.")
+captura("12_paso3_carrera.png", "Ejecución de java bubbleSortHilos --compartido 1000 10000.")
+par("Con 1,000 elementos el contador compartido marcó 106,823 cuando debía marcar 124,287, y con 10,000 elementos "
+    "marcó 7,811,971 cuando debía marcar 12,536,532, es decir, se perdieron 4,724,561 incrementos. La instrucción "
+    "`contadorCompartido++` parece una sola operación, pero en realidad son tres: leer el valor, sumarle uno y "
+    "escribirlo. Si los dos hilos leen el mismo valor al mismo tiempo, ambos escriben el mismo resultado y se pierde un "
+    "incremento. Esto es una condición de carrera sobre una sección crítica (Silberschatz et al., 2018). Se puede "
+    "resolver con `synchronized`, con `AtomicLong` o, como se hizo en la versión final, evitando compartir el dato: "
+    "cada hilo cuenta en su propia variable y el hilo principal suma los dos resultados después del `join`, lo cual es "
+    "correcto y no pierde rendimiento (Goetz et al., 2006).")
 
-# ---------------------------------------------------------------- 6
-h1("6. Comentarios de implementación y dificultades encontradas")
-vinetas([
-    "**Código del enunciado con saltos de línea rotos.** Al copiar el código desde el PDF, el texto "
-    "\"Values Before the sort:\\n\" quedó partido en dos líneas (un String no puede tener un salto de línea "
-    "real en Java) y `j++` aparecía como `j+` y `+` en líneas separadas. Hubo que reconstruir esas líneas para "
-    "que compilara.",
-    "**Tamaño impar.** El enunciado sugiere llamar `bubble_srt(right, N/2)` y `bubble_srt(left, N/2)`, pero si N "
-    "es impar, N/2 redondea hacia abajo y se pierde un elemento. Se resolvió dejando la mitad derecha con "
-    "tamaño N − N/2.",
-    "**Condición de carrera con el contador** (sección 5.7). Se solucionó con un contador por hilo.",
-    "**start() vs. run().** Si se llama `hilo.run()` en lugar de `hilo.start()`, el código se ejecuta en el hilo "
-    "main de forma secuencial y no hay paralelismo (el programa funciona, pero no mejora). Es un error fácil de "
-    "cometer y difícil de notar sin medir el tiempo.",
-    "**Olvidar join().** Sin `join()`, el main hace el merge mientras los hilos todavía están ordenando y el "
-    "resultado sale desordenado. Por eso cada programa verifica al final que el arreglo quedó ordenado.",
-    "**Medición de tiempos poco confiable.** Las primeras mediciones variaban mucho entre ejecuciones porque "
-    "Java compila el código \"en caliente\" (JIT) y el sistema operativo tiene otros procesos. Se resolvió con: "
-    "`System.nanoTime()` en lugar de `currentTimeMillis()`, una fase de calentamiento, 5 repeticiones con "
-    "mediana y la misma semilla aleatoria para las tres versiones.",
-    "**Desbordamiento de enteros.** Al calcular el valor teórico n(n−1)/4 con `int`, para N = 50,000 el resultado "
-    "salió negativo, porque 50,000 × 49,999 ≈ 2,500 millones no cabe en un `int` (máximo ≈ 2,147 millones). Se "
-    "corrigió usando `long` (`n * (n - 1L) / 4.0`). Por la misma razón los contadores de intercambios son `long`.",
-    "**Simular single-core/dual-core.** No se contaba con máquinas de 1 y 2 núcleos, así que se usó la afinidad de "
-    "CPU (`taskset` en Linux, `start /affinity` en Windows) para que el sistema operativo solo planifique el "
-    "proceso en esos núcleos. Se verificó con `Runtime.getRuntime().availableProcessors()`.",
-])
+# ---------------------------------------------------------------- DIFICULTADES
+titulo("Comentarios de implementación y dificultades encontradas", nueva_pagina=True)
+par("La primera dificultad apareció al copiar el código del enunciado desde el PDF. El texto \"Values Before the "
+    "sort:\\n\" quedó partido en dos líneas, lo cual no es válido para un String en Java, y la instrucción `j++` "
+    "aparecía separada en dos renglones. Hubo que reconstruir esas líneas para que el programa compilara.")
+par("En el Paso 2 el enunciado sugiere llamar a `bubble_srt` con N/2 elementos para cada mitad, pero cuando N es "
+    "impar la división entera redondea hacia abajo y se pierde un elemento. Se resolvió dejando que la mitad derecha "
+    "tenga tamaño N − N/2. En el Paso 3 surgió la condición de carrera del contador compartido descrita en la sección "
+    "anterior, que se resolvió con un contador por hilo. También se tuvo cuidado de llamar a `start` y no a `run`, "
+    "porque `run` ejecuta el código en el hilo principal de forma secuencial y no produce paralelismo, y de no olvidar "
+    "`join`, porque sin él el merge se haría mientras los hilos todavía están ordenando. Por eso cada programa verifica "
+    "al final que el arreglo quedó ordenado.")
+par("Las primeras mediciones de tiempo variaban mucho entre ejecuciones porque Java compila el código mientras se "
+    "ejecuta (compilador JIT) y el sistema operativo atiende otros procesos al mismo tiempo. Se resolvió usando "
+    "`System.nanoTime`, una fase de calentamiento, cinco repeticiones con mediana y la misma semilla aleatoria para las "
+    "tres versiones. Aun así, las Figuras 5, 10 y 14 muestran tiempos distintos a los de las tablas, porque son "
+    "ejecuciones individuales sin calentamiento.")
+par("Al calcular el valor teórico n(n−1)/4 con el tipo `int`, el resultado para 50,000 elementos salió negativo, "
+    "porque 50,000 × 49,999 es cerca de 2,500 millones y no cabe en un `int`. Se corrigió haciendo la operación con "
+    "`long`, y por la misma razón todos los contadores de intercambios son `long`.")
+par("En cuanto al entorno, al principio el comando `javac` no era reconocido en la terminal, a pesar de que el JDK 27 "
+    "estaba instalado, porque su carpeta bin no estaba en la variable PATH; se agregó la ruta del JDK a PATH. Después, "
+    "el comando `start /affinity` falló en PowerShell, porque ahí `start` es un alias de otro comando "
+    "(Start-Process) con otra sintaxis; se resolvió ejecutándolo a través de CMD con `cmd /c`. Además, el servidor de "
+    "lenguaje Java de la extensión de Visual Studio Code se cerró una vez por falta de memoria y generó los archivos "
+    "hs_err_pid27628.log y replay_pid27628.log. Esto coincide con el 97 % de uso de RAM observado en el Administrador "
+    "de tareas y no afectó a los programas del proyecto, que se compilaron y ejecutaron desde la terminal.")
+par("Por último, al simular el single-core y el dual-core se observó que `availableProcessors` seguía reportando 8 "
+    "procesadores aunque la afinidad estuviera limitada, por lo que la verificación se hizo con los tiempos medidos. "
+    "También se comprobó que la afinidad 3 no equivale a dos núcleos físicos, sino a los dos hilos SMT de un mismo "
+    "núcleo; para simular un dual-core real se podría usar una afinidad que tome procesadores lógicos de núcleos "
+    "distintos.")
 
-# ---------------------------------------------------------------- 7
-h1("7. Conclusiones generales")
-vinetas([
-    "Bubble Sort hace en promedio n(n−1)/4 intercambios (uno por cada inversión) y su tiempo crece de forma "
-    "cuadrática: multiplicar los datos por 10 multiplica el trabajo por ~100.",
-    "Dividir el problema en dos mitades y mezclarlas reduce el trabajo a la mitad aun sin paralelismo, porque "
-    "2·(N/2)² = N²/2 y el merge resuelve las inversiones cruzadas en tiempo lineal. Es la base de Merge Sort.",
-    "Ejecutar las mitades en hilos separados solo mejora el tiempo si existen núcleos libres para ejecutarlos al "
-    "mismo tiempo y si el trabajo de cada hilo es mucho mayor que el costo de crearlo. En este experimento, con "
-    "2 núcleos se obtuvo casi el máximo teórico de 2x; con 1 núcleo, ninguna mejora.",
-    "Combinando las dos ideas (dividir + paralelizar) la versión final fue ≈4 veces más rápida que el Bubble Sort "
-    "original para N grandes.",
-    "Los hilos comparten memoria, lo que es cómodo pero peligroso: cualquier dato que dos hilos modifiquen a la vez "
-    "necesita sincronización o, mejor aún, diseñarse para no compartirse.",
-    "Esto conecta con la gestión de procesos del sistema operativo: los hilos de Java son hilos del SO y es el "
-    "planificador del sistema operativo quien decide en qué núcleo corre cada uno.",
-])
+# ---------------------------------------------------------------- CONCLUSIONES
+titulo("Conclusiones generales")
+par("El Bubble Sort realiza en promedio n(n−1)/4 intercambios, uno por cada inversión del arreglo, y su tiempo crece "
+    "de forma cuadrática: multiplicar los datos por 10 multiplica el trabajo por cerca de 100. Dividir el problema en "
+    "dos mitades y mezclarlas reduce el trabajo a la mitad aun sin paralelismo, porque 2·(N/2)² = N²/2 y el merge "
+    "resuelve las inversiones cruzadas en tiempo lineal; esta es la idea en la que se basa el Merge Sort.")
+par("Ejecutar las mitades en hilos separados solo mejora el tiempo si hay núcleos libres para ejecutarlos al mismo "
+    "tiempo y si el trabajo de cada hilo es mucho mayor que el costo de crearlo. En este equipo, con todos los "
+    "procesadores disponibles, se obtuvo casi el máximo teórico de 2x frente al Paso 2, y la versión final fue unas "
+    f"{M8[50000]['speedup_p1_vs_p3']:.0f} veces más rápida que el Bubble Sort original con 50,000 elementos. Con un "
+    "solo procesador lógico los hilos no aportaron ninguna mejora.")
+par("También quedó claro que los hilos comparten memoria, lo cual es cómodo pero peligroso: cualquier dato que dos "
+    "hilos modifiquen a la vez necesita sincronización o, mejor aún, un diseño que evite compartirlo. Todo esto se "
+    "conecta con la gestión de procesos del sistema operativo, ya que los hilos de Java son hilos del sistema operativo "
+    "y es su planificador el que decide en qué núcleo corre cada uno.")
 
-# ---------------------------------------------------------------- 8
-h1("8. Guía para demostrar el proyecto paso a paso")
-par("Orden sugerido para presentar el proyecto en vivo (toma unos 5 minutos):")
-vinetas([
-    "Abrir una terminal en la carpeta `src` y compilar: `javac *.java`.",
-    "**Paso 1:** `java bubbleSort` → mostrar el arreglo antes/después y los 16 intercambios. Luego "
-    "`java bubbleSort 10 100 1000 10000` → señalar que ×10 datos ≈ ×100 intercambios.",
-    "**Paso 2:** `java bubbleSortDividido` → mostrar las dos mitades ordenadas, el merge y que ahora son 6 "
-    "intercambios. Luego `java bubbleSortDividido 10 100 1000 10000` → los intercambios bajan a la mitad.",
-    "**Paso 3:** `java bubbleSortHilos 10 100 1000 10000` → mismos intercambios que el Paso 2, pero menos tiempo "
-    "para 10,000 y más tiempo para 10.",
-    "Abrir el Administrador de tareas (Windows) o `htop` (Linux) y correr `java bubbleSortDividido 50000` y luego "
-    "`java bubbleSortHilos 50000`: con el Paso 2 se ve un solo núcleo al 100 %, con el Paso 3 se ven dos.",
-    "**Comparación completa:** `java Comparacion` → tabla con los tres pasos y archivo `resultados.csv` "
-    "(se abre en Excel para hacer las gráficas).",
-    "**Single-core:** `taskset -c 0 java Comparacion r1.csv 3` (Linux) o `start /affinity 1 /wait java "
-    "Comparacion r1.csv 3` (Windows) → los hilos ya no ayudan.",
-    "**Condición de carrera:** `java bubbleSortHilos --compartido 10000` → el contador compartido pierde "
-    "incrementos y el valor cambia en cada ejecución.",
-], numerada=True)
+# ---------------------------------------------------------------- REFERENCIAS
+titulo("Referencias", nueva_pagina=True)
+referencias = [
+    "Amdahl, G. M. (1967). Validity of the single processor approach to achieving large scale computing capabilities. "
+    "En Proceedings of the April 18-20, 1967, Spring Joint Computer Conference (pp. 483–485). ACM. "
+    "https://doi.org/10.1145/1465482.1465560",
+    "Cormen, T. H., Leiserson, C. E., Rivest, R. L., y Stein, C. (2022). Introduction to algorithms (4.ª ed.). MIT Press.",
+    "Goetz, B., Peierls, T., Bloch, J., Bowbeer, J., Holmes, D., y Lea, D. (2006). Java concurrency in practice. "
+    "Addison-Wesley.",
+    "Microsoft. (2023). start. Microsoft Learn. "
+    "https://learn.microsoft.com/es-es/windows-server/administration/windows-commands/start",
+    "Oracle. (s.f.-a). Lesson: Concurrency. The Java Tutorials. "
+    "https://docs.oracle.com/javase/tutorial/essential/concurrency/",
+    "Oracle. (s.f.-b). Class Thread. Java SE API Specification. "
+    "https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/lang/Thread.html",
+    "Pineda, R. A. (2026). Proyecto #1: Primeros pasos en la programación concurrente [Enunciado de proyecto]. "
+    "Universidad Tecnológica Centroamericana.",
+    "Silberschatz, A., Galvin, P. B., y Gagne, G. (2018). Operating system concepts (10.ª ed.). Wiley.",
+    "Tanenbaum, A. S., y Bos, H. (2015). Modern operating systems (4.ª ed.). Pearson.",
+]
+for ref in referencias:
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    espaciado(p, despues=6)
+    p.paragraph_format.left_indent = Cm(1.27)
+    p.paragraph_format.first_line_indent = Cm(-1.27)
+    fmt(p.add_run(ref))
 
-# ---------------------------------------------------------------- Anexos
-salto_pagina()
-h1("Anexo A – Código fuente completo")
+# ---------------------------------------------------------------- ANEXO
+titulo("Anexo: Código fuente", nueva_pagina=True)
+par("A continuación se incluye el código fuente completo de los cuatro programas, tal como se compilaron y "
+    "ejecutaron en el equipo de pruebas. El código se presenta en fuente Courier New para conservar la alineación.")
 for archivo, desc in [("bubbleSort.java", "Paso 1"), ("bubbleSortDividido.java", "Paso 2"),
-                      ("bubbleSortHilos.java", "Paso 3"), ("Comparacion.java", "Experimento comparativo")]:
-    h2(f"{archivo}  ({desc})")
-    bloque(fuente(archivo), size=7.5)
+                      ("bubbleSortHilos.java", "Paso 3"), ("Comparacion.java", "experimento comparativo")]:
+    titulo(f"{archivo} ({desc})", 2)
+    codigo(fuente_java(archivo))
 
-h1("Anexo B – Salida completa de los experimentos")
-for archivo, desc in [("comparacion_multicore.txt", "4 núcleos"), ("comparacion_2nucleos.txt", "2 núcleos (taskset -c 0,1)"),
-                      ("comparacion_1nucleo.txt", "1 núcleo (taskset -c 0)")]:
-    h2(f"Comparación con {desc}")
-    bloque(txt(archivo), oscuro=True, size=5.5)
+# ----------------------------------------------------------------------------
+# Indice: campo TOC de Word con las entradas ya escritas
+# ----------------------------------------------------------------------------
+sec = doc.sections[0]
+tab_pos = sec.page_width - sec.left_margin - sec.right_margin
+entradas = []
+for k, (nivel, texto) in enumerate(TITULOS):
+    q = OxmlElement("w:p")
+    entradas.append(q)
+    marcador_indice._p.addprevious(q)
+from docx.text.paragraph import Paragraph
+for k, (nivel, texto) in enumerate(TITULOS):
+    p = Paragraph(entradas[k], marcador_indice._parent)
+    espaciado(p, interlineado=1.5, despues=0)
+    p.paragraph_format.left_indent = Cm(0 if nivel == 1 else 0.75)
+    p.paragraph_format.tab_stops.add_tab_stop(tab_pos, WD_TAB_ALIGNMENT.RIGHT, WD_TAB_LEADER.DOTS)
+    if k == 0:
+        campo_simple(fmt(p.add_run(), bold=(nivel == 1)), 'TOC \\o "1-2" \\h \\z \\u')
+    fmt(p.add_run(texto), bold=(nivel == 1))
+    fmt(p.add_run("\t" + str(PAGINAS.get(f"{k}", ""))), bold=(nivel == 1))
+    if k == len(TITULOS) - 1:
+        cerrar_campo(fmt(p.add_run()))
+marcador_indice._p.getparent().remove(marcador_indice._p)
 
+json.dump([t for _, t in TITULOS], open(os.path.join(BASE, ".titulos.json"), "w", encoding="utf-8"), ensure_ascii=False)
 doc.save(SALIDA)
-print("Informe generado:", SALIDA)
+print("Informe generado:", SALIDA, "| figuras:", N_FIG[0], "| tablas:", N_TAB[0])
