@@ -71,6 +71,14 @@ for p in body.iter(qn("w:p")):
         if t.text == "Programación concurrente" and i + 1 < len(ts) and ts[i + 1].text.strip().isdigit():
             ts[i + 1].text = ""
 
+# Fecha de entrega: la de hoy
+for p in body.iter(qn("w:p")):
+    ts = list(p.iter(qn("w:t")))
+    if "".join(t.text or "" for t in ts).strip() == "15 de agosto de 2026":
+        ts[0].text = "29 de septiembre de 2026"
+        for t in ts[1:]:
+            t.text = ""
+
 hijos = list(body)
 corte = next(i for i, el in enumerate(hijos) if el.tag == qn("w:p")
              and "".join(t.text or "" for t in el.iter(qn("w:t"))).startswith("Parte 1"))
@@ -82,6 +90,33 @@ usados = set(re.findall(r'r:(?:embed|id)="([^"]+)"', body.xml))
 for rid, rel in list(doc.part.rels.items()):
     if "image" in rel.reltype and rid not in usados:
         doc.part.drop_rel(rid)
+
+def forzar_times(elemento):
+    for rf in elemento.iter(qn("w:rFonts")):
+        for a in list(rf.attrib):
+            del rf.attrib[a]
+        for a in ("w:ascii", "w:hAnsi", "w:cs", "w:eastAsia"):
+            rf.set(qn(a), FUENTE)
+    for rpr in elemento.iter(qn("w:rPr")):
+        if rpr.find(qn("w:rFonts")) is None:
+            rf = OxmlElement("w:rFonts")
+            for a in ("w:ascii", "w:hAnsi", "w:cs", "w:eastAsia"):
+                rf.set(qn(a), FUENTE)
+            rpr.insert(0, rf)
+
+forzar_times(body)                      # portada
+forzar_times(doc.styles.element)        # estilos y valores por defecto
+for st in doc.styles:
+    try:
+        st.font.name = FUENTE
+    except (AttributeError, ValueError):
+        pass
+dd = doc.styles.element.find(qn("w:docDefaults"))
+rpd = dd.find(qn("w:rPrDefault"))
+rpr0 = rpd.find(qn("w:rPr"))
+if rpr0.find(qn("w:rFonts")) is None:
+    rf = OxmlElement("w:rFonts"); rpr0.insert(0, rf)
+forzar_times(dd)
 
 # Estilos de titulo: Times New Roman 14 negrita, negro (los usa el indice)
 for nombre in ("Heading 1", "Heading 2"):
@@ -135,7 +170,7 @@ def titulo(texto, nivel=1, nueva_pagina=False):
     return p
 
 def par(texto, align=WD_ALIGN_PARAGRAPH.JUSTIFY):
-    """Parrafo normal; **texto** va en negrita y `texto` en Courier New."""
+    """Parrafo normal; **texto** va en negrita. Los `...` solo marcan nombres (misma fuente)."""
     p = doc.add_paragraph()
     p.alignment = align
     espaciado(p)
@@ -145,7 +180,7 @@ def par(texto, align=WD_ALIGN_PARAGRAPH.JUSTIFY):
         if trozo.startswith("**"):
             fmt(p.add_run(trozo[2:-2]), bold=True)
         elif trozo.startswith("`"):
-            fmt(p.add_run(trozo[1:-1]), size=11, font="Courier New")
+            fmt(p.add_run(trozo[1:-1]))
         else:
             fmt(p.add_run(trozo))
     return p
@@ -247,7 +282,7 @@ def codigo(texto):
         if i:
             p = c.add_paragraph()
         espaciado(p, interlineado=1.0, despues=0)
-        fmt(p.add_run(linea.replace("\t", "    ") or " "), size=8.5, font="Courier New")
+        fmt(p.add_run(linea.replace("\t", "    ") or " "), size=10)
     q = doc.add_paragraph()
     espaciado(q, interlineado=1.0, despues=6)
 
@@ -661,7 +696,7 @@ for ref in referencias:
 # ---------------------------------------------------------------- ANEXO
 titulo("Anexo: Código fuente", nueva_pagina=True)
 par("A continuación se incluye el código fuente completo de los cuatro programas, tal como se compilaron y "
-    "ejecutaron en el equipo de pruebas. El código se presenta en fuente Courier New para conservar la alineación.")
+    "ejecutaron en el equipo de pruebas.")
 for archivo, desc in [("bubbleSort.java", "Paso 1"), ("bubbleSortDividido.java", "Paso 2"),
                       ("bubbleSortHilos.java", "Paso 3"), ("Comparacion.java", "experimento comparativo")]:
     titulo(f"{archivo} ({desc})", 2)
