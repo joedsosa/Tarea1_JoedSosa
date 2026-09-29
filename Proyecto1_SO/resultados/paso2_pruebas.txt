@@ -1,0 +1,9 @@
+$ java bubbleSortDividido 10 100 1000 10000
+Antes:           56022 79543 67812 21265 76510 8557 68389 49959 20302 52275 
+Mitad izquierda: 21265 56022 67812 76510 79543 
+Mitad derecha:   8557 20302 49959 52275 68389 
+Despues (merge): 8557 20302 21265 49959 52275 56022 67812 68389 76510 79543 
+N=    10 | intercambios izq=         5 der=         4 total=          9 |     0.010 ms | ordenado=true
+N=   100 | intercambios izq=       584 der=       610 total=      1,194 |     0.067 ms | ordenado=true
+N=  1000 | intercambios izq=    62,241 der=    62,046 total=    124,287 |     3.082 ms | ordenado=true
+N= 10000 | intercambios izq= 6,350,364 der= 6,186,168 total= 12,536,532 |    29.473 ms | ordenado=true

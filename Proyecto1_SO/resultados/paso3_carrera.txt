@@ -1,0 +1,6 @@
+$ java bubbleSortHilos --compartido 1000 10000
+Nucleos disponibles para la JVM: 4
+N=  1000 | intercambios izq=    62,241 der=    62,046 total=    124,287 |    17.877 ms | ordenado=true
+         contador COMPARTIDO = 98,095 (deberia ser 124,287; se perdieron 26,192)
+N= 10000 | intercambios izq= 6,350,364 der= 6,186,168 total= 12,536,532 |    58.701 ms | ordenado=true
+         contador COMPARTIDO = 8,369,448 (deberia ser 12,536,532; se perdieron 4,167,084)

@@ -1,0 +1,7 @@
+$ java bubbleSortHilos
+Nucleos disponibles para la JVM: 4
+Antes:           12 9 4 99 120 1 3 10 
+Mitad izquierda: 4 9 12 99 
+Mitad derecha:   1 3 10 120 
+Despues (merge): 1 3 4 9 10 12 99 120 
+N=     8 | intercambios izq=         3 der=         3 total=          6 |     0.937 ms | ordenado=true

@@ -1,0 +1,8 @@
+$ java bubbleSort
+Values Before the sort:
+
+12 9 4 99 120 1 3 10 
+Values after the sort:
+1 3 4 9 10 12 99 120 
+Numero de intercambios: 16
+PAUSE

@@ -1,0 +1,7 @@
+$ java bubbleSort 10 100 1000 10000
+Antes:   56022 79543 67812 21265 76510 8557 68389 49959 20302 52275 
+Despues: 8557 20302 21265 49959 52275 56022 67812 68389 76510 79543 
+N=    10 | intercambios=         29 |     0.004 ms | ordenado=true
+N=   100 | intercambios=      2,450 |     0.143 ms | ordenado=true
+N=  1000 | intercambios=    245,941 |     3.786 ms | ordenado=true
+N= 10000 | intercambios= 24,998,680 |    74.962 ms | ordenado=true
